@@ -3,10 +3,11 @@ Purpose:
 - monitor public key certificate
 
 Description:
-- Prints public key certificate details offered by tls service.
+- Prints public key certificate details offered by TLS service.
 
 Releases:
 - 0.1.0 - 2018/09/23 : initial release
+- 0.2.0 - 2018/09/24 : output format modified, verbose mode implemented
 
 Author:
 - Klaus Tockloth
@@ -34,13 +35,10 @@ Contact (eMail):
 - freizeitkarte@googlemail.com
 
 Remarks:
-- Useful commands:
-  openssl s_client -showcerts -connect example.com:443
+- NN
 
 Links:
-- https://www.feistyduck.com/library/openssl-cookbook/online/ch-testing-with-openssl.html
 - https://godoc.org/golang.org/x/crypto/ocsp
-- https://github.com/xenolf/lego/blob/master/acme/crypto.go
 */
 
 package main
@@ -50,6 +48,7 @@ import (
 	"crypto"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -67,14 +66,15 @@ import (
 // general program info
 var (
 	progName    = os.Args[0]
-	progVersion = "0.1.0"
-	progDate    = "2018/09/23"
+	progVersion = "0.2.0"
+	progDate    = "2018/09/24"
 	progPurpose = "monitor public key certificate"
-	progInfo    = "Prints public key certificate details offered by tls service."
+	progInfo    = "Prints public key certificate details offered by TLS service."
 )
 
-// global settings
+// command line settings
 var timeout *int
+var verbose *bool
 
 /*
 main starts this program
@@ -82,13 +82,14 @@ main starts this program
 func main() {
 
 	timeout = flag.Int("timeout", 19, "communication timeout in seconds")
+	verbose = flag.Bool("verbose", false, "prints additional PEM formatted data (certificate, OCSP response)")
 
 	flag.Usage = printUsage
 	flag.Parse()
 
 	// at least one argument required
 	if len(flag.Args()) == 0 {
-		fmt.Printf("\nError:\n  address:port argument (tls service) required.\n")
+		fmt.Printf("\nError:\n  address:port argument (TLS service) required.\n")
 		printUsage()
 	}
 
@@ -100,27 +101,27 @@ func main() {
 
 	service := flag.Args()[0]
 
+	fmt.Printf("GENERAL INFORMATION ...\n")
+	fmt.Printf("Service   : %s\n", service)
+	fmt.Printf("Timeout   : %d\n", *timeout)
+	fmt.Printf("Verbose   : %t\n", *verbose)
+	fmt.Printf("Timestamp : %s\n", time.Now().Format("2006-01-02 15:04:05 -0700 MST"))
+
+	// connect to service
 	config := &tls.Config{
 		InsecureSkipVerify: true,
 	}
-
-	// connect to service with timeout
 	dialer := &net.Dialer{
 		Timeout: time.Duration(*timeout) * time.Second,
 	}
-	// fmt.Printf("\nConnecting to %q ...\n\n", service)
 	conn, err := tls.DialWithDialer(dialer, "tcp", service, config)
 	if err != nil {
 		fmt.Printf("Error: unable to connect to service, error = %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("TLSService            : %s\n", service)
-	fmt.Printf("Timeout               : %d\n", *timeout)
-	fmt.Printf("Timestamp             : %s\n\n", time.Now().Format("2006-01-02 15:04:05 -0700 MST"))
-
-	// log connection details
-	logConnectionState(conn)
+	// print connection details
+	printConnectionState(conn)
 
 	// shut down the connection
 	err = conn.Close()
@@ -133,19 +134,17 @@ func main() {
 }
 
 /*
-logConnectionState logs some data from the connection state
+printConnectionState prints some data from the connection state
 */
-func logConnectionState(conn *tls.Conn) {
+func printConnectionState(conn *tls.Conn) {
 
 	state := conn.ConnectionState()
-	// fmt.Printf("Connection State ...\n%v\n", spew.Sdump(state))
 
 	var issuerCertificate *x509.Certificate
 	var issuerCommonName string
 
 	// print some public key certificate data
 	for index, certificate := range state.PeerCertificates {
-		// fmt.Printf("certificate ...\n%s\n", spew.Sdump(certificate))
 		if index == 0 {
 			issuerCommonName = certificate.Issuer.CommonName
 		}
@@ -154,39 +153,15 @@ func logConnectionState(conn *tls.Conn) {
 				issuerCertificate = certificate
 			}
 		}
-		fmt.Printf("SignatureAlgorithm    : %s\n", certificate.SignatureAlgorithm)
-		fmt.Printf("PublicKeyAlgorithm    : %s\n", certificate.PublicKeyAlgorithm)
-		fmt.Printf("Version               : %v\n", certificate.Version)
-		fmt.Printf("SerialNumber          : %s\n", certificate.SerialNumber)
-		fmt.Printf("Subject               : %s\n", certificate.Subject)
-		fmt.Printf("Issuer                : %s\n", certificate.Issuer)
-		fmt.Printf("NotBefore             : %s\n", certificate.NotBefore)
-		fmt.Printf("NotAfter              : %s\n", certificate.NotAfter)
-		keyUsages := buildKeyUsages(certificate.KeyUsage)
-		fmt.Printf("KeyUsage              : %v (%b, %s)\n", certificate.KeyUsage, certificate.KeyUsage, strings.Join(keyUsages, ", "))
-		if certificate.BasicConstraintsValid {
-			fmt.Printf("IsCA                  : %t\n", certificate.IsCA)
-		}
-		if len(certificate.DNSNames) > 0 {
-			fmt.Printf("DNSNames              : %s\n", strings.Join(certificate.DNSNames, ", "))
-		}
-		if len(certificate.OCSPServer) > 0 {
-			fmt.Printf("OCSPServer            : %s\n", strings.Join(certificate.OCSPServer, ", "))
-		}
-		if len(certificate.IssuingCertificateURL) > 0 {
-			fmt.Printf("IssuingCertificateURL : %s\n", strings.Join(certificate.IssuingCertificateURL, ", "))
-		}
-		if len(certificate.CRLDistributionPoints) > 0 {
-			fmt.Printf("CRLDistributionPoints : %s\n", strings.Join(certificate.CRLDistributionPoints, ", "))
-		}
-		fmt.Printf("\n")
+		fmt.Printf("\nCERTIFICATE DETAILS ...\n")
+		printCertificateDetails(certificate)
 	}
 
 	// stapled OCSP response from server (if any)
 	if state.OCSPResponse != nil {
 		if issuerCertificate != nil {
-			ocspState := evaluateOCSPResponse(state.OCSPResponse, issuerCertificate)
-			fmt.Printf("OCSPState (Stapled)   : %s\n", ocspState)
+			fmt.Printf("\nOCSP DETAILS - STAPLED INFORMATION ...\n")
+			printOCSPDetails(state.OCSPResponse, issuerCertificate)
 		}
 	}
 
@@ -195,13 +170,13 @@ func logConnectionState(conn *tls.Conn) {
 		if issuerCertificate != nil {
 			leafCertificate := state.PeerCertificates[0]
 			ocspServer := state.PeerCertificates[0].OCSPServer[0]
-			ocspRawData, err := fetchOCSPResponseFromService(leafCertificate, issuerCertificate, ocspServer)
+			rawOCSPResponse, err := fetchOCSPResponseFromService(leafCertificate, issuerCertificate, ocspServer)
 			if err != nil {
 				fmt.Printf("Error: unable to fetch OCSP state from service, error = %v\n", err)
 				os.Exit(1)
 			}
-			ocspState := evaluateOCSPResponse(ocspRawData, issuerCertificate)
-			fmt.Printf("OCSPState (Service)   : %s\n", ocspState)
+			fmt.Printf("\nOCSP DETAILS - SERVICE RESPONSE ...\n")
+			printOCSPDetails(rawOCSPResponse, issuerCertificate)
 		}
 	}
 }
@@ -219,7 +194,7 @@ func printUsage() {
 
 	fmt.Printf("\n" +
 		"What does this tool do?\n" +
-		"  - connects to a tls service and grabs the public key certificate\n" +
+		"  - connects to a TLS service and grabs the public key certificate\n" +
 		"  - if certificate contains OCSP stapling data: parses the data\n" +
 		"  - if certificate contains link to OCSP service: requests the status\n" +
 		"  - prints out a subset (the important part) of the collected data\n" +
@@ -231,17 +206,9 @@ func printUsage() {
 		"How to check the validity of a public key certificate?\n" +
 		"  - assess 'NotBefore' value of leaf certificate\n" +
 		"  - assess 'NotAfter' value of leaf certificate\n" +
-		"  - assess 'OCSPState (Stapled)' value\n" +
-		"  - assess 'OCSPState (Service)' value\n" +
+		"  - assess 'Status' value(s) of OCSP response(s)\n" +
 		"\n" +
-		"Possible 'OCSPState' values:\n" +
-		"  - Good\n" +
-		"  - Revoked\n" +
-		"  - Unknown\n" +
-		"  - ServerFailed\n" +
-		"  - error: unrecognised OCSP status\n" +
-		"\n" +
-		"Possible 'KeyUsage' values (binary):\n" +
+		"Possible certificate 'KeyUsage' values (binary encoded):\n" +
 		"  - 000000001 = DigitalSignature\n" +
 		"  - 000000010 = ContentCommitment\n" +
 		"  - 000000100 = KeyEncipherment\n" +
@@ -250,67 +217,149 @@ func printUsage() {
 		"  - 000100000 = CertSign\n" +
 		"  - 001000000 = CRLSign\n" +
 		"  - 010000000 = EncipherOnly\n" +
-		"  - 100000000 = DecipherOnly\n")
+		"  - 100000000 = DecipherOnly\n" +
+		"\n" +
+		"Possible OCSP 'Status' values:\n" +
+		"  - Good\n" +
+		"  - Revoked\n" +
+		"  - Unknown\n" +
+		"  - ServerFailed\n" +
+		"\n" +
+		"Possible OCSP 'RevocationReason' values:\n" +
+		"  - 0 = Unspecified\n" +
+		"  - 1 = KeyCompromise\n" +
+		"  - 2 = CACompromise\n" +
+		"  - 3 = AffiliationChanged\n" +
+		"  - 4 = Superseded\n" +
+		"  - 5 = CessationOfOperation\n" +
+		"  - 6 = CertificateHold\n" +
+		"  - 8 = RemoveFromCRL\n" +
+		"  - 9 = PrivilegeWithdrawn\n" +
+		"  - 10 = AACompromise\n")
 
 	fmt.Printf("\nUsage:\n")
-	fmt.Printf("  %s [-timeout=sec] address:port\n", progName)
+	fmt.Printf("  %s [-timeout=sec] [-verbose] address:port\n", progName)
 
 	fmt.Printf("\nExamples:\n")
 	fmt.Printf("  %s example.com:443\n", progName)
 	fmt.Printf("  %s -timeout=7 example.com:443\n", progName)
+	fmt.Printf("  %s -verbose example.com:443\n", progName)
 
 	fmt.Printf("\nOptions:\n")
 	flag.PrintDefaults()
 
 	fmt.Printf("\nArguments:\n")
 	fmt.Printf("  address:port\n")
-	fmt.Printf("        address (name/ip) and port of tls service\n")
+	fmt.Printf("        address (name/ip) and port of TLS service\n")
 
 	fmt.Printf("\nRemarks:\n" +
 		"  - The timeout setting will be used:\n" +
-		"    + as connection timeout when requesting the tls service\n" +
+		"    + as connection timeout when requesting the TLS service\n" +
 		"    + as overall timeout when requesting the OCSP service\n" +
 		"  - empty or invalid values are not printed\n")
 
-	fmt.Printf("\nReference output:\n%s\n", referenceOutput)
+	fmt.Printf("\nReference output (nonverbose):\n%s\n", referenceOutput)
 
 	os.Exit(1)
 }
 
 /*
-evaluateOCSPResponse evaluates the OCSP response
+printCertificateDetails prints important certificate details / information
 */
-func evaluateOCSPResponse(bytes []byte, issuer *x509.Certificate) string {
+func printCertificateDetails(certificate *x509.Certificate) {
+
+	fmt.Printf("SignatureAlgorithm    : %s\n", certificate.SignatureAlgorithm)
+	fmt.Printf("PublicKeyAlgorithm    : %s\n", certificate.PublicKeyAlgorithm)
+	fmt.Printf("Version               : %v\n", certificate.Version)
+	fmt.Printf("SerialNumber          : %s\n", certificate.SerialNumber)
+	fmt.Printf("Subject               : %s\n", certificate.Subject)
+	fmt.Printf("Issuer                : %s\n", certificate.Issuer)
+	fmt.Printf("NotBefore             : %s\n", certificate.NotBefore)
+	fmt.Printf("NotAfter              : %s\n", certificate.NotAfter)
+	keyUsages := buildKeyUsages(certificate.KeyUsage)
+	fmt.Printf("KeyUsage              : %v (%b, %s)\n", certificate.KeyUsage, certificate.KeyUsage, strings.Join(keyUsages, ", "))
+	if certificate.BasicConstraintsValid {
+		fmt.Printf("IsCA                  : %t\n", certificate.IsCA)
+	}
+	if len(certificate.DNSNames) > 0 {
+		fmt.Printf("DNSNames              : %s\n", strings.Join(certificate.DNSNames, ", "))
+	}
+	if len(certificate.OCSPServer) > 0 {
+		fmt.Printf("OCSPServer            : %s\n", strings.Join(certificate.OCSPServer, ", "))
+	}
+	if len(certificate.IssuingCertificateURL) > 0 {
+		fmt.Printf("IssuingCertificateURL : %s\n", strings.Join(certificate.IssuingCertificateURL, ", "))
+	}
+	if len(certificate.CRLDistributionPoints) > 0 {
+		fmt.Printf("CRLDistributionPoints : %s\n", strings.Join(certificate.CRLDistributionPoints, ", "))
+	}
+	if *verbose {
+		printCertificatePEM(certificate.Raw)
+	}
+}
+
+/*
+printOCSPDetails prints important OCSP response details / information
+*/
+func printOCSPDetails(rawOCSPResponse []byte, issuer *x509.Certificate) {
 
 	if issuer == nil {
-		return "error: unsufficient arguments"
+		fmt.Printf("error: unsufficient arguments\n")
+		return
 	}
 
-	r, err := ocsp.ParseResponse(bytes, issuer)
+	response, err := ocsp.ParseResponse(rawOCSPResponse, issuer)
 	if err != nil {
-		return "error: parsing OSCP response failed"
+		fmt.Printf("error: parsing raw OSCP response failed\n")
+		return
 	}
 
-	// fmt.Printf("OSCP response details ...\n")
-	// fmt.Printf("Status           : %v\n", r.Status)
-	// fmt.Printf("SerialNumber     : %v\n", r.SerialNumber)
-	// fmt.Printf("ProducedAt       : %v\n", r.ProducedAt)
-	// fmt.Printf("ThisUpdate       : %v\n", r.ThisUpdate)
-	// fmt.Printf("NextUpdate       : %v\n", r.NextUpdate)
-	// fmt.Printf("RevokedAt        : %v\n", r.RevokedAt)
-	// fmt.Printf("RevocationReason : %v\n\n", r.RevocationReason)
-
-	switch r.Status {
+	statusText := "error: unrecognised OCSP status"
+	switch response.Status {
 	case ocsp.Good:
-		return "Good"
+		statusText = "Good"
 	case ocsp.Revoked:
-		return "Revoked"
+		statusText = "Revoked"
 	case ocsp.Unknown:
-		return "Unknown"
+		statusText = "Unknown"
 	case ocsp.ServerFailed:
-		return "ServerFailed"
-	default:
-		return "error: unrecognised OCSP status"
+		statusText = "ServerFailed"
+	}
+
+	revocationReasonText := "error: unrecognised revocation reason"
+	switch response.RevocationReason {
+	case ocsp.Unspecified:
+		revocationReasonText = "Unspecified"
+	case ocsp.KeyCompromise:
+		revocationReasonText = "KeyCompromise"
+	case ocsp.CACompromise:
+		revocationReasonText = "CACompromise"
+	case ocsp.AffiliationChanged:
+		revocationReasonText = "AffiliationChanged"
+	case ocsp.Superseded:
+		revocationReasonText = "Superseded"
+	case ocsp.CessationOfOperation:
+		revocationReasonText = "CessationOfOperation"
+	case ocsp.CertificateHold:
+		revocationReasonText = "CertificateHold"
+	case ocsp.RemoveFromCRL:
+		revocationReasonText = "RemoveFromCRL"
+	case ocsp.PrivilegeWithdrawn:
+		revocationReasonText = "PrivilegeWithdrawn"
+	case ocsp.AACompromise:
+		revocationReasonText = "AACompromise"
+	}
+
+	fmt.Printf("Status           : %v (%s)\n", response.Status, statusText)
+	fmt.Printf("SerialNumber     : %v\n", response.SerialNumber)
+	fmt.Printf("ProducedAt       : %v\n", response.ProducedAt)
+	fmt.Printf("ThisUpdate       : %v\n", response.ThisUpdate)
+	fmt.Printf("NextUpdate       : %v\n", response.NextUpdate)
+	fmt.Printf("RevokedAt        : %v\n", response.RevokedAt)
+	fmt.Printf("RevocationReason : %v (%s)\n", response.RevocationReason, revocationReasonText)
+
+	if *verbose {
+		printOCSPResonsePEM(rawOCSPResponse)
 	}
 }
 
@@ -411,12 +460,53 @@ func Has(b, flag x509.KeyUsage) bool {
 	return b&flag != 0
 }
 
+/*
+printCertificatePEM prints the certificate in PEM format
+*/
+func printCertificatePEM(rawCertificate []byte) {
+
+	var pemBuffer bytes.Buffer
+	block := &pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: rawCertificate,
+	}
+
+	if err := pem.Encode(&pemBuffer, block); err != nil {
+		fmt.Printf("Error: unable to encode raw certificate, error = %v\n", err)
+		return
+	}
+
+	fmt.Printf("\n%s", pemBuffer.String())
+}
+
+/*
+printOCSPResonsePEM prints the OCSP response in PEM format
+*/
+func printOCSPResonsePEM(rawOCSPResponse []byte) {
+
+	var pemBuffer bytes.Buffer
+	block := &pem.Block{
+		Type:  "OCSP RESPONSE",
+		Bytes: rawOCSPResponse,
+	}
+
+	if err := pem.Encode(&pemBuffer, block); err != nil {
+		fmt.Printf("Error: unable to encode raw OCSP response, error = %v\n", err)
+		return
+	}
+
+	fmt.Printf("\n%s", pemBuffer.String())
+}
+
 // reference output (for 'example.com:443')
 var referenceOutput = `
-  TLSService            : example.com:443
-  Timeout               : 19
-  Timestamp             : 2018-09-22 18:49:40 +0200 CEST
+  GENERAL INFORMATION ...
+  Service   : example.com:443
+  Timeout   : 19
+  Verbose   : false
+  Timestamp : 2018-09-24 13:17:32 +0200 CEST
   
+  CERTIFICATE DETAILS ...
   SignatureAlgorithm    : SHA256-RSA
   PublicKeyAlgorithm    : RSA
   Version               : 3
@@ -432,6 +522,7 @@ var referenceOutput = `
   IssuingCertificateURL : http://cacerts.digicert.com/DigiCertSHA2HighAssuranceServerCA.crt
   CRLDistributionPoints : http://crl3.digicert.com/sha2-ha-server-g4.crl, http://crl4.digicert.com/sha2-ha-server-g4.crl
   
+  CERTIFICATE DETAILS ...
   SignatureAlgorithm    : SHA256-RSA
   PublicKeyAlgorithm    : RSA
   Version               : 3
@@ -445,6 +536,21 @@ var referenceOutput = `
   OCSPServer            : http://ocsp.digicert.com
   CRLDistributionPoints : http://crl4.digicert.com/DigiCertHighAssuranceEVRootCA.crl
   
-  OCSPState (Stapled)   : Good
-  OCSPState (Service)   : Good
+  OCSP DETAILS - STAPLED INFORMATION ...
+  Status           : 0 (Good)
+  SerialNumber     : 19132437207909210467858529073412672688
+  ProducedAt       : 2018-09-24 03:39:53 +0000 UTC
+  ThisUpdate       : 2018-09-24 03:39:53 +0000 UTC
+  NextUpdate       : 2018-10-01 02:54:53 +0000 UTC
+  RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
+  RevocationReason : 0 (Unspecified)
+  
+  OCSP DETAILS - SERVICE RESPONSE ...
+  Status           : 0 (Good)
+  SerialNumber     : 19132437207909210467858529073412672688
+  ProducedAt       : 2018-09-24 09:39:54 +0000 UTC
+  ThisUpdate       : 2018-09-24 09:39:54 +0000 UTC
+  NextUpdate       : 2018-10-01 08:54:54 +0000 UTC
+  RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
+  RevocationReason : 0 (Unspecified)
 `

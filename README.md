@@ -2,7 +2,7 @@
 
 ## Purpose
 
-'certstate' is a simple tool (helper) to monitor the validity of your public key certificates (digital certificate, ssl certificate, tls certificate, X.509 certificate). It grabs the certificate, checks the OCSP state (staple, service) and prints the collected data as plain text. It's up to you, to monitor the data and alarm someone if a certificate has become invalid or threatens to become invalid.
+'certstate' is a simple helper tool to monitor the validity of public key certificates (digital certificate, SSL/TLS certificate, X.509 certificate). It grabs the certificate, checks the OCSP state (staple, service) and prints a subset of the collected data as plain text. It's up to you, to monitor the data and generate an alarm if the certificate has become invalid or threatens to become invalid.
 
 ## Usage
 
@@ -11,12 +11,12 @@ $ ./certstate -help
 
 Program:
   Name    : ./certstate
-  Release : 0.1.0 - 2018/09/23
+  Release : 0.2.0 - 2018/09/24
   Purpose : monitor public key certificate
-  Info    : Prints public key certificate details offered by tls service.
+  Info    : Prints public key certificate details offered by TLS service.
 
 What does this tool do?
-  - connects to a tls service and grabs the public key certificate
+  - connects to a TLS service and grabs the public key certificate
   - if certificate contains OCSP stapling data: parses the data
   - if certificate contains link to OCSP service: requests the status
   - prints out a subset (the important part) of the collected data
@@ -28,17 +28,9 @@ Possible return values:
 How to check the validity of a public key certificate?
   - assess 'NotBefore' value of leaf certificate
   - assess 'NotAfter' value of leaf certificate
-  - assess 'OCSPState (Stapled)' value
-  - assess 'OCSPState (Service)' value
+  - assess 'Status' value(s) of OCSP response(s)
 
-Possible 'OCSPState' values:
-  - Good
-  - Revoked
-  - Unknown
-  - ServerFailed
-  - error: unrecognised OCSP status
-
-Possible 'KeyUsage' values (binary):
+Possible certificate 'KeyUsage' values (binary encoded):
   - 000000001 = DigitalSignature
   - 000000010 = ContentCommitment
   - 000000100 = KeyEncipherment
@@ -49,33 +41,57 @@ Possible 'KeyUsage' values (binary):
   - 010000000 = EncipherOnly
   - 100000000 = DecipherOnly
 
+Possible OCSP 'Status' values:
+  - Good
+  - Revoked
+  - Unknown
+  - ServerFailed
+
+Possible OCSP 'RevocationReason' values:
+  - 0 = Unspecified
+  - 1 = KeyCompromise
+  - 2 = CACompromise
+  - 3 = AffiliationChanged
+  - 4 = Superseded
+  - 5 = CessationOfOperation
+  - 6 = CertificateHold
+  - 8 = RemoveFromCRL
+  - 9 = PrivilegeWithdrawn
+  - 10 = AACompromise
+
 Usage:
-  ./certstate [-timeout=sec] address:port
+  ./certstate [-timeout=sec] [-verbose] address:port
 
 Examples:
   ./certstate example.com:443
   ./certstate -timeout=7 example.com:443
+  ./certstate -verbose example.com:443
 
 Options:
   -timeout int
-        communication timeout in seconds (default 19)
+      communication timeout in seconds (default 19)
+  -verbose
+      prints additional PEM formatted data (certificate, OCSP response)
 
 Arguments:
   address:port
-        address (name/ip) and port of tls service
+        address (name/ip) and port of TLS service
 
 Remarks:
   - The timeout setting will be used:
-    + as connection timeout when requesting the tls service
+    + as connection timeout when requesting the TLS service
     + as overall timeout when requesting the OCSP service
   - empty or invalid values are not printed
 
-Reference output:
+Reference output (nonverbose):
 
-  TLSService            : example.com:443
-  Timeout               : 19
-  Timestamp             : 2018-09-22 18:49:40 +0200 CEST
+  GENERAL INFORMATION ...
+  Service   : example.com:443
+  Timeout   : 19
+  Verbose   : false
+  Timestamp : 2018-09-24 13:17:32 +0200 CEST
   
+  CERTIFICATE DETAILS ...
   SignatureAlgorithm    : SHA256-RSA
   PublicKeyAlgorithm    : RSA
   Version               : 3
@@ -91,6 +107,7 @@ Reference output:
   IssuingCertificateURL : http://cacerts.digicert.com/DigiCertSHA2HighAssuranceServerCA.crt
   CRLDistributionPoints : http://crl3.digicert.com/sha2-ha-server-g4.crl, http://crl4.digicert.com/sha2-ha-server-g4.crl
   
+  CERTIFICATE DETAILS ...
   SignatureAlgorithm    : SHA256-RSA
   PublicKeyAlgorithm    : RSA
   Version               : 3
@@ -104,16 +121,36 @@ Reference output:
   OCSPServer            : http://ocsp.digicert.com
   CRLDistributionPoints : http://crl4.digicert.com/DigiCertHighAssuranceEVRootCA.crl
   
-  OCSPState (Stapled)   : Good
-  OCSPState (Service)   : Good
+  OCSP DETAILS - STAPLED INFORMATION ...
+  Status           : 0 (Good)
+  SerialNumber     : 19132437207909210467858529073412672688
+  ProducedAt       : 2018-09-24 03:39:53 +0000 UTC
+  ThisUpdate       : 2018-09-24 03:39:53 +0000 UTC
+  NextUpdate       : 2018-10-01 02:54:53 +0000 UTC
+  RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
+  RevocationReason : 0 (Unspecified)
+  
+  OCSP DETAILS - SERVICE RESPONSE ...
+  Status           : 0 (Good)
+  SerialNumber     : 19132437207909210467858529073412672688
+  ProducedAt       : 2018-09-24 09:39:54 +0000 UTC
+  ThisUpdate       : 2018-09-24 09:39:54 +0000 UTC
+  NextUpdate       : 2018-10-01 08:54:54 +0000 UTC
+  RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
+  RevocationReason : 0 (Unspecified)
 ```
 
 ## Remarks
 
-The master branch is used for program development and may be unstable. Use only stable releases for production.
+The master branch is used for program development and may be unstable.
 
 ## Releases
 
 ### 0.1.0, 2018/09/23
 
 - initial release
+
+### 0.2.0, 2018/09/24
+
+- output format modified
+- verbose mode implemented
