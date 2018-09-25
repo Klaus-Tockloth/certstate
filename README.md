@@ -11,7 +11,7 @@ $ ./certstate -help
 
 Program:
   Name    : ./certstate
-  Release : 0.2.0 - 2018/09/24
+  Release : 0.3.0 - 2018/09/25
   Purpose : monitor public key certificate
   Info    : Prints public key certificate details offered by TLS service.
 
@@ -40,6 +40,22 @@ Possible certificate 'KeyUsage' values (binary encoded):
   - 001000000 = CRLSign
   - 010000000 = EncipherOnly
   - 100000000 = DecipherOnly
+
+Possible certificate 'ExtKeyUsage' values:
+  - Any ExtKeyUsage
+  - ServerAuth
+  - ClientAuth
+  - CodeSigning
+  - EmailProtection
+  - IPSECEndSystem
+  - IPSECTunnel
+  - IPSECUser
+  - TimeStamping
+  - OCSPSigning
+  - MicrosoftServerGatedCrypto
+  - NetscapeServerGatedCrypto
+  - MicrosoftCommercialCodeSigning
+  - MicrosoftKernelCodeSigning
 
 Possible OCSP 'Status' values:
   - Good
@@ -71,7 +87,7 @@ Options:
   -timeout int
       communication timeout in seconds (default 19)
   -verbose
-      prints additional PEM formatted data (certificate, OCSP response)
+      adds fingerprints, PEM certificate, PEM OCSP response
 
 Arguments:
   address:port
@@ -89,7 +105,7 @@ Reference output (nonverbose):
   Service   : example.com:443
   Timeout   : 19
   Verbose   : false
-  Timestamp : 2018-09-24 13:17:32 +0200 CEST
+  Timestamp : 2018-09-24 17:06:25 +0200 CEST
   
   CERTIFICATE DETAILS ...
   SignatureAlgorithm    : SHA256-RSA
@@ -98,8 +114,8 @@ Reference output (nonverbose):
   SerialNumber          : 19132437207909210467858529073412672688
   Subject               : CN=www.example.org,OU=Technology,O=Internet Corporation for Assigned Names and Numbers,L=Los Angeles,ST=California,C=US
   Issuer                : CN=DigiCert SHA2 High Assurance Server CA,OU=www.digicert.com,O=DigiCert Inc,C=US
-  NotBefore             : 2015-11-03 00:00:00 +0000 UTC
-  NotAfter              : 2018-11-28 12:00:00 +0000 UTC
+  NotBefore             : 2015-11-03 00:00:00 +0000 UTC (valid for 1121 days)
+  NotAfter              : 2018-11-28 12:00:00 +0000 UTC (expires in 64 days)
   KeyUsage              : 5 (101, KeyEncipherment, DigitalSignature)
   IsCA                  : false
   DNSNames              : www.example.org, example.com, example.edu, example.net, example.org, www.example.com, www.example.edu, www.example.net
@@ -114,8 +130,8 @@ Reference output (nonverbose):
   SerialNumber          : 6489877074546166222510380951761917343
   Subject               : CN=DigiCert SHA2 High Assurance Server CA,OU=www.digicert.com,O=DigiCert Inc,C=US
   Issuer                : CN=DigiCert High Assurance EV Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US
-  NotBefore             : 2013-10-22 12:00:00 +0000 UTC
-  NotAfter              : 2028-10-22 12:00:00 +0000 UTC
+  NotBefore             : 2013-10-22 12:00:00 +0000 UTC (valid for 5479 days)
+  NotAfter              : 2028-10-22 12:00:00 +0000 UTC (expires in 3680 days)
   KeyUsage              : 97 (1100001, CRLSign, CertSign, DigitalSignature)
   IsCA                  : true
   OCSPServer            : http://ocsp.digicert.com
@@ -125,8 +141,8 @@ Reference output (nonverbose):
   Status           : 0 (Good)
   SerialNumber     : 19132437207909210467858529073412672688
   ProducedAt       : 2018-09-24 03:39:53 +0000 UTC
-  ThisUpdate       : 2018-09-24 03:39:53 +0000 UTC
-  NextUpdate       : 2018-10-01 02:54:53 +0000 UTC
+  ThisUpdate       : 2018-09-24 03:39:53 +0000 UTC (was provided 11 hours ago)
+  NextUpdate       : 2018-10-01 02:54:53 +0000 UTC (will be provided in 155 hours)
   RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
   RevocationReason : 0 (Unspecified)
   
@@ -134,8 +150,8 @@ Reference output (nonverbose):
   Status           : 0 (Good)
   SerialNumber     : 19132437207909210467858529073412672688
   ProducedAt       : 2018-09-24 09:39:54 +0000 UTC
-  ThisUpdate       : 2018-09-24 09:39:54 +0000 UTC
-  NextUpdate       : 2018-10-01 08:54:54 +0000 UTC
+  ThisUpdate       : 2018-09-24 09:39:54 +0000 UTC (was provided 5 hours ago)
+  NextUpdate       : 2018-10-01 08:54:54 +0000 UTC (will be provided in 161 hours)
   RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
   RevocationReason : 0 (Unspecified)
 ```
@@ -152,5 +168,8 @@ The master branch is used for program development and may be unstable.
 
 ### 0.2.0, 2018/09/24
 
-- output format modified
-- verbose mode implemented
+- output format modified, verbose mode implemented
+
+### 0.3.0, 2018/09/25
+
+- time calculations, ExtKeyUsage, fingerprints added

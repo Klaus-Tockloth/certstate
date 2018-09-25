@@ -8,6 +8,7 @@ Description:
 Releases:
 - 0.1.0 - 2018/09/23 : initial release
 - 0.2.0 - 2018/09/24 : output format modified, verbose mode implemented
+- 0.3.0 - 2018/09/25 : time calculations, ExtKeyUsage, fingerprints added
 
 Author:
 - Klaus Tockloth
@@ -46,8 +47,12 @@ package main
 import (
 	"bytes"
 	"crypto"
+	"crypto/md5"
+	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -66,15 +71,16 @@ import (
 // general program info
 var (
 	progName    = os.Args[0]
-	progVersion = "0.2.0"
-	progDate    = "2018/09/24"
+	progVersion = "0.3.0"
+	progDate    = "2018/09/25"
 	progPurpose = "monitor public key certificate"
 	progInfo    = "Prints public key certificate details offered by TLS service."
 )
 
-// command line settings
+// global objects / command line settings
 var timeout *int
 var verbose *bool
+var start time.Time
 
 /*
 main starts this program
@@ -82,7 +88,7 @@ main starts this program
 func main() {
 
 	timeout = flag.Int("timeout", 19, "communication timeout in seconds")
-	verbose = flag.Bool("verbose", false, "prints additional PEM formatted data (certificate, OCSP response)")
+	verbose = flag.Bool("verbose", false, "adds fingerprints, PEM certificate, PEM OCSP response")
 
 	flag.Usage = printUsage
 	flag.Parse()
@@ -100,12 +106,13 @@ func main() {
 	}
 
 	service := flag.Args()[0]
+	start = time.Now()
 
 	fmt.Printf("GENERAL INFORMATION ...\n")
-	fmt.Printf("Service   : %s\n", service)
-	fmt.Printf("Timeout   : %d\n", *timeout)
-	fmt.Printf("Verbose   : %t\n", *verbose)
-	fmt.Printf("Timestamp : %s\n", time.Now().Format("2006-01-02 15:04:05 -0700 MST"))
+	fmt.Printf("Service : %s\n", service)
+	fmt.Printf("Timeout : %d\n", *timeout)
+	fmt.Printf("Verbose : %t\n", *verbose)
+	fmt.Printf("Time    : %s\n", start.Format("2006-01-02 15:04:05 -0700 MST"))
 
 	// connect to service
 	config := &tls.Config{
@@ -219,6 +226,22 @@ func printUsage() {
 		"  - 010000000 = EncipherOnly\n" +
 		"  - 100000000 = DecipherOnly\n" +
 		"\n" +
+		"Possible certificate 'ExtKeyUsage' values:\n" +
+		"  - Any ExtKeyUsage\n" +
+		"  - ServerAuth\n" +
+		"  - ClientAuth\n" +
+		"  - CodeSigning\n" +
+		"  - EmailProtection\n" +
+		"  - IPSECEndSystem\n" +
+		"  - IPSECTunnel\n" +
+		"  - IPSECUser\n" +
+		"  - TimeStamping\n" +
+		"  - OCSPSigning\n" +
+		"  - MicrosoftServerGatedCrypto\n" +
+		"  - NetscapeServerGatedCrypto\n" +
+		"  - MicrosoftCommercialCodeSigning\n" +
+		"  - MicrosoftKernelCodeSigning\n" +
+		"\n" +
 		"Possible OCSP 'Status' values:\n" +
 		"  - Good\n" +
 		"  - Revoked\n" +
@@ -268,16 +291,24 @@ printCertificateDetails prints important certificate details / information
 */
 func printCertificateDetails(certificate *x509.Certificate) {
 
+	// fmt.Printf("certificate (dump) ...\n%s\n", spew.Sdump(certificate))
+
 	fmt.Printf("SignatureAlgorithm    : %s\n", certificate.SignatureAlgorithm)
 	fmt.Printf("PublicKeyAlgorithm    : %s\n", certificate.PublicKeyAlgorithm)
 	fmt.Printf("Version               : %v\n", certificate.Version)
 	fmt.Printf("SerialNumber          : %s\n", certificate.SerialNumber)
 	fmt.Printf("Subject               : %s\n", certificate.Subject)
 	fmt.Printf("Issuer                : %s\n", certificate.Issuer)
-	fmt.Printf("NotBefore             : %s\n", certificate.NotBefore)
-	fmt.Printf("NotAfter              : %s\n", certificate.NotAfter)
+	diff := certificate.NotAfter.Sub(certificate.NotBefore)
+	fmt.Printf("NotBefore             : %s (valid for %d days)\n", certificate.NotBefore, diff/(time.Hour*24))
+	diff = certificate.NotAfter.Sub(start)
+	fmt.Printf("NotAfter              : %s (expires in %d days)\n", certificate.NotAfter, diff/(time.Hour*24))
 	keyUsages := buildKeyUsages(certificate.KeyUsage)
 	fmt.Printf("KeyUsage              : %v (%b, %s)\n", certificate.KeyUsage, certificate.KeyUsage, strings.Join(keyUsages, ", "))
+	if len(certificate.ExtKeyUsage) > 0 {
+		extKeyUsages := buildExtKeyUsages(certificate.ExtKeyUsage)
+		fmt.Printf("ExtKeyUsage           : %s\n", strings.Join(extKeyUsages, ", "))
+	}
 	if certificate.BasicConstraintsValid {
 		fmt.Printf("IsCA                  : %t\n", certificate.IsCA)
 	}
@@ -294,6 +325,12 @@ func printCertificateDetails(certificate *x509.Certificate) {
 		fmt.Printf("CRLDistributionPoints : %s\n", strings.Join(certificate.CRLDistributionPoints, ", "))
 	}
 	if *verbose {
+		sha1Fingerprint := sha1.Sum(certificate.Raw)
+		fmt.Printf("SHA1Fingerprint       : %s\n", hex.EncodeToString(sha1Fingerprint[:]))
+		sha256Fingerprint := sha256.Sum256(certificate.Raw)
+		fmt.Printf("SHA256Fingerprint     : %s\n", hex.EncodeToString(sha256Fingerprint[:]))
+		md5Fingerprint := md5.Sum(certificate.Raw)
+		fmt.Printf("MD5Fingerprint        : %s\n", hex.EncodeToString(md5Fingerprint[:]))
 		printCertificatePEM(certificate.Raw)
 	}
 }
@@ -303,16 +340,13 @@ printOCSPDetails prints important OCSP response details / information
 */
 func printOCSPDetails(rawOCSPResponse []byte, issuer *x509.Certificate) {
 
-	if issuer == nil {
-		fmt.Printf("error: unsufficient arguments\n")
-		return
-	}
-
 	response, err := ocsp.ParseResponse(rawOCSPResponse, issuer)
 	if err != nil {
 		fmt.Printf("error: parsing raw OSCP response failed\n")
 		return
 	}
+
+	// fmt.Printf("OCSP response (dump) ...\n%s\n", spew.Sdump(response))
 
 	statusText := "error: unrecognised OCSP status"
 	switch response.Status {
@@ -353,8 +387,10 @@ func printOCSPDetails(rawOCSPResponse []byte, issuer *x509.Certificate) {
 	fmt.Printf("Status           : %v (%s)\n", response.Status, statusText)
 	fmt.Printf("SerialNumber     : %v\n", response.SerialNumber)
 	fmt.Printf("ProducedAt       : %v\n", response.ProducedAt)
-	fmt.Printf("ThisUpdate       : %v\n", response.ThisUpdate)
-	fmt.Printf("NextUpdate       : %v\n", response.NextUpdate)
+	diff := start.Sub(response.ThisUpdate)
+	fmt.Printf("ThisUpdate       : %v (was provided %d hours ago)\n", response.ThisUpdate, diff/(time.Hour))
+	diff = response.NextUpdate.Sub(start)
+	fmt.Printf("NextUpdate       : %v (will be provided in %d hours)\n", response.NextUpdate, diff/(time.Hour))
 	fmt.Printf("RevokedAt        : %v\n", response.RevokedAt)
 	fmt.Printf("RevocationReason : %v (%s)\n", response.RevocationReason, revocationReasonText)
 
@@ -446,7 +482,6 @@ func buildKeyUsages(keyUsage x509.KeyUsage) []string {
 	if Has(keyUsage, x509.KeyUsageContentCommitment) {
 		keyUsageList = append(keyUsageList, "ContentCommitment")
 	}
-
 	if Has(keyUsage, x509.KeyUsageDigitalSignature) {
 		keyUsageList = append(keyUsageList, "DigitalSignature")
 	}
@@ -458,6 +493,51 @@ func buildKeyUsages(keyUsage x509.KeyUsage) []string {
 func Has(b, flag x509.KeyUsage) bool {
 
 	return b&flag != 0
+}
+
+/*
+buildExtKeyUsages builds an ordered slice with all extended key usages
+*/
+func buildExtKeyUsages(extKeyUsage []x509.ExtKeyUsage) []string {
+
+	var extKeyUsageList []string
+
+	for _, usage := range extKeyUsage {
+		switch usage {
+		case x509.ExtKeyUsageAny:
+			extKeyUsageList = append(extKeyUsageList, "UsageAny")
+		case x509.ExtKeyUsageServerAuth:
+			extKeyUsageList = append(extKeyUsageList, "ServerAuth")
+		case x509.ExtKeyUsageClientAuth:
+			extKeyUsageList = append(extKeyUsageList, "ClientAuth")
+		case x509.ExtKeyUsageCodeSigning:
+			extKeyUsageList = append(extKeyUsageList, "CodeSigning")
+		case x509.ExtKeyUsageEmailProtection:
+			extKeyUsageList = append(extKeyUsageList, "EmailProtection")
+		case x509.ExtKeyUsageIPSECEndSystem:
+			extKeyUsageList = append(extKeyUsageList, "IPSECEndSystem")
+		case x509.ExtKeyUsageIPSECTunnel:
+			extKeyUsageList = append(extKeyUsageList, "IPSECTunnel")
+		case x509.ExtKeyUsageIPSECUser:
+			extKeyUsageList = append(extKeyUsageList, "IPSECUser")
+		case x509.ExtKeyUsageTimeStamping:
+			extKeyUsageList = append(extKeyUsageList, "TimeStamping")
+		case x509.ExtKeyUsageOCSPSigning:
+			extKeyUsageList = append(extKeyUsageList, "OCSPSigning")
+		case x509.ExtKeyUsageMicrosoftServerGatedCrypto:
+			extKeyUsageList = append(extKeyUsageList, "MicrosoftServerGatedCrypto")
+		case x509.ExtKeyUsageNetscapeServerGatedCrypto:
+			extKeyUsageList = append(extKeyUsageList, "NetscapeServerGatedCrypto")
+		case x509.ExtKeyUsageMicrosoftCommercialCodeSigning:
+			extKeyUsageList = append(extKeyUsageList, "MicrosoftCommercialCodeSigning")
+		case x509.ExtKeyUsageMicrosoftKernelCodeSigning:
+			extKeyUsageList = append(extKeyUsageList, "MicrosoftKernelCodeSigning")
+		default:
+			extKeyUsageList = append(extKeyUsageList, "UnknownUsage")
+		}
+	}
+
+	return extKeyUsageList
 }
 
 /*
@@ -501,10 +581,10 @@ func printOCSPResonsePEM(rawOCSPResponse []byte) {
 // reference output (for 'example.com:443')
 var referenceOutput = `
   GENERAL INFORMATION ...
-  Service   : example.com:443
-  Timeout   : 19
-  Verbose   : false
-  Timestamp : 2018-09-24 13:17:32 +0200 CEST
+  Service : example.com:443
+  Timeout : 19
+  Verbose : false
+  Time    : 2018-09-25 08:58:58 +0200 CEST
   
   CERTIFICATE DETAILS ...
   SignatureAlgorithm    : SHA256-RSA
@@ -513,9 +593,10 @@ var referenceOutput = `
   SerialNumber          : 19132437207909210467858529073412672688
   Subject               : CN=www.example.org,OU=Technology,O=Internet Corporation for Assigned Names and Numbers,L=Los Angeles,ST=California,C=US
   Issuer                : CN=DigiCert SHA2 High Assurance Server CA,OU=www.digicert.com,O=DigiCert Inc,C=US
-  NotBefore             : 2015-11-03 00:00:00 +0000 UTC
-  NotAfter              : 2018-11-28 12:00:00 +0000 UTC
+  NotBefore             : 2015-11-03 00:00:00 +0000 UTC (valid for 1121 days)
+  NotAfter              : 2018-11-28 12:00:00 +0000 UTC (expires in 64 days)
   KeyUsage              : 5 (101, KeyEncipherment, DigitalSignature)
+  ExtKeyUsage           : ServerAuth, ClientAuth
   IsCA                  : false
   DNSNames              : www.example.org, example.com, example.edu, example.net, example.org, www.example.com, www.example.edu, www.example.net
   OCSPServer            : http://ocsp.digicert.com
@@ -529,9 +610,10 @@ var referenceOutput = `
   SerialNumber          : 6489877074546166222510380951761917343
   Subject               : CN=DigiCert SHA2 High Assurance Server CA,OU=www.digicert.com,O=DigiCert Inc,C=US
   Issuer                : CN=DigiCert High Assurance EV Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US
-  NotBefore             : 2013-10-22 12:00:00 +0000 UTC
-  NotAfter              : 2028-10-22 12:00:00 +0000 UTC
+  NotBefore             : 2013-10-22 12:00:00 +0000 UTC (valid for 5479 days)
+  NotAfter              : 2028-10-22 12:00:00 +0000 UTC (expires in 3680 days)
   KeyUsage              : 97 (1100001, CRLSign, CertSign, DigitalSignature)
+  ExtKeyUsage           : ServerAuth, ClientAuth
   IsCA                  : true
   OCSPServer            : http://ocsp.digicert.com
   CRLDistributionPoints : http://crl4.digicert.com/DigiCertHighAssuranceEVRootCA.crl
@@ -539,18 +621,18 @@ var referenceOutput = `
   OCSP DETAILS - STAPLED INFORMATION ...
   Status           : 0 (Good)
   SerialNumber     : 19132437207909210467858529073412672688
-  ProducedAt       : 2018-09-24 03:39:53 +0000 UTC
-  ThisUpdate       : 2018-09-24 03:39:53 +0000 UTC
-  NextUpdate       : 2018-10-01 02:54:53 +0000 UTC
+  ProducedAt       : 2018-09-24 21:39:57 +0000 UTC
+  ThisUpdate       : 2018-09-24 21:39:57 +0000 UTC (was provided 9 hours ago)
+  NextUpdate       : 2018-10-01 20:54:57 +0000 UTC (will be provided in 157 hours)
   RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
   RevocationReason : 0 (Unspecified)
   
   OCSP DETAILS - SERVICE RESPONSE ...
   Status           : 0 (Good)
   SerialNumber     : 19132437207909210467858529073412672688
-  ProducedAt       : 2018-09-24 09:39:54 +0000 UTC
-  ThisUpdate       : 2018-09-24 09:39:54 +0000 UTC
-  NextUpdate       : 2018-10-01 08:54:54 +0000 UTC
+  ProducedAt       : 2018-09-25 03:39:55 +0000 UTC
+  ThisUpdate       : 2018-09-25 03:39:55 +0000 UTC (was provided 3 hours ago)
+  NextUpdate       : 2018-10-02 02:54:55 +0000 UTC (will be provided in 163 hours)
   RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
   RevocationReason : 0 (Unspecified)
 `
