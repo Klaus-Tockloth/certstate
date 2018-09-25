@@ -85,9 +85,9 @@ Examples:
 
 Options:
   -timeout int
-      communication timeout in seconds (default 19)
+    	communication timeout in seconds (default 19)
   -verbose
-      adds fingerprints, PEM certificate, PEM OCSP response
+    	adds fingerprints, PEM certificate, PEM OCSP response
 
 Arguments:
   address:port
@@ -102,10 +102,10 @@ Remarks:
 Reference output (nonverbose):
 
   GENERAL INFORMATION ...
-  Service   : example.com:443
-  Timeout   : 19
-  Verbose   : false
-  Timestamp : 2018-09-24 17:06:25 +0200 CEST
+  Service : example.com:443
+  Timeout : 19
+  Verbose : false
+  Time    : 2018-09-25 08:58:58 +0200 CEST
   
   CERTIFICATE DETAILS ...
   SignatureAlgorithm    : SHA256-RSA
@@ -117,6 +117,7 @@ Reference output (nonverbose):
   NotBefore             : 2015-11-03 00:00:00 +0000 UTC (valid for 1121 days)
   NotAfter              : 2018-11-28 12:00:00 +0000 UTC (expires in 64 days)
   KeyUsage              : 5 (101, KeyEncipherment, DigitalSignature)
+  ExtKeyUsage           : ServerAuth, ClientAuth
   IsCA                  : false
   DNSNames              : www.example.org, example.com, example.edu, example.net, example.org, www.example.com, www.example.edu, www.example.net
   OCSPServer            : http://ocsp.digicert.com
@@ -133,6 +134,7 @@ Reference output (nonverbose):
   NotBefore             : 2013-10-22 12:00:00 +0000 UTC (valid for 5479 days)
   NotAfter              : 2028-10-22 12:00:00 +0000 UTC (expires in 3680 days)
   KeyUsage              : 97 (1100001, CRLSign, CertSign, DigitalSignature)
+  ExtKeyUsage           : ServerAuth, ClientAuth
   IsCA                  : true
   OCSPServer            : http://ocsp.digicert.com
   CRLDistributionPoints : http://crl4.digicert.com/DigiCertHighAssuranceEVRootCA.crl
@@ -140,18 +142,18 @@ Reference output (nonverbose):
   OCSP DETAILS - STAPLED INFORMATION ...
   Status           : 0 (Good)
   SerialNumber     : 19132437207909210467858529073412672688
-  ProducedAt       : 2018-09-24 03:39:53 +0000 UTC
-  ThisUpdate       : 2018-09-24 03:39:53 +0000 UTC (was provided 11 hours ago)
-  NextUpdate       : 2018-10-01 02:54:53 +0000 UTC (will be provided in 155 hours)
+  ProducedAt       : 2018-09-24 21:39:57 +0000 UTC
+  ThisUpdate       : 2018-09-24 21:39:57 +0000 UTC (was provided 9 hours ago)
+  NextUpdate       : 2018-10-01 20:54:57 +0000 UTC (will be provided in 157 hours)
   RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
   RevocationReason : 0 (Unspecified)
   
   OCSP DETAILS - SERVICE RESPONSE ...
   Status           : 0 (Good)
   SerialNumber     : 19132437207909210467858529073412672688
-  ProducedAt       : 2018-09-24 09:39:54 +0000 UTC
-  ThisUpdate       : 2018-09-24 09:39:54 +0000 UTC (was provided 5 hours ago)
-  NextUpdate       : 2018-10-01 08:54:54 +0000 UTC (will be provided in 161 hours)
+  ProducedAt       : 2018-09-25 03:39:55 +0000 UTC
+  ThisUpdate       : 2018-09-25 03:39:55 +0000 UTC (was provided 3 hours ago)
+  NextUpdate       : 2018-10-02 02:54:55 +0000 UTC (will be provided in 163 hours)
   RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
   RevocationReason : 0 (Unspecified)
 ```
