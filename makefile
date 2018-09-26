@@ -5,6 +5,7 @@
 # http://stackoverflow.com/documentation/go/1020/cross-compilation#t=201703051136361578518
 #
 # version 1.0.0 - 2018/09/23: initial release
+# version 1.1.0 - 2018/09/26: 386 support removed
 
 appname := certstate
 sources := $(wildcard *.go)
@@ -21,19 +22,11 @@ clean:
 	rm -rf build/
 
 # ----- linux builds -----
-linux: build/$(appname)_linux_arm.tar.gz build/$(appname)_linux_arm64.tar.gz build/$(appname)_linux_386.tar.gz build/$(appname)_linux_amd64.tar.gz
-
-build/$(appname)_linux_386.tar.gz: $(sources)
-	$(call build,linux,386,)
-	$(call tar,linux,386)
+linux: build/$(appname)_linux_amd64.tar.gz build/$(appname)_linux_arm64.tar.gz
 
 build/$(appname)_linux_amd64.tar.gz: $(sources)
 	$(call build,linux,amd64,)
 	$(call tar,linux,amd64)
-
-build/$(appname)_linux_arm.tar.gz: $(sources)
-	$(call build,linux,arm,)
-	$(call tar,linux,arm)
 
 build/$(appname)_linux_arm64.tar.gz: $(sources)
 	$(call build,linux,arm64,)
@@ -47,11 +40,7 @@ build/$(appname)_darwin_amd64.tar.gz: $(sources)
 	$(call tar,darwin,amd64)
 
 # ----- windows builds -----
-windows: build/$(appname)_windows_386.zip  build/$(appname)_windows_amd64.zip
-
-build/$(appname)_windows_386.zip: $(sources)
-	$(call build,windows,386,.exe)
-	$(call zip,windows,386,.exe)
+windows: build/$(appname)_windows_amd64.zip
 
 build/$(appname)_windows_amd64.zip: $(sources)
 	$(call build,windows,amd64,.exe)

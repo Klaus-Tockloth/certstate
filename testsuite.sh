@@ -184,6 +184,10 @@ $appname github.com:443
 $appname porsche.com:443
 $appname highway.porsche.com:443
 $appname freizeitkarte-osm.de:443
+$appname vb-ascheberg-herbern.de:443
+$appname www.volksbank-muenster.de:443
+$appname dkb.de:443
+$appname uni-leipzig.de:443
 
 # IPv4 Addresses
 # ------------------------------------

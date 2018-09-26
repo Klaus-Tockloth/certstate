@@ -8,7 +8,8 @@ Description:
 Releases:
 - 0.1.0 - 2018/09/23 : initial release
 - 0.2.0 - 2018/09/24 : output format modified, verbose mode implemented
-- 0.3.0 - 2018/09/25 : time calculations, ExtKeyUsage, fingerprints added
+- 0.3.0 - 2018/09/25 : added: time calculations, ExtKeyUsage, fingerprints
+- 0.4.0 - 2018/09/26 : added: SubjectKeyId, AuthorityKeyId, debug option, connection details, network details
 
 Author:
 - Klaus Tockloth
@@ -65,14 +66,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"golang.org/x/crypto/ocsp"
 )
 
 // general program info
 var (
 	progName    = os.Args[0]
-	progVersion = "0.3.0"
-	progDate    = "2018/09/25"
+	progVersion = "0.4.0"
+	progDate    = "2018/09/26"
 	progPurpose = "monitor public key certificate"
 	progInfo    = "Prints public key certificate details offered by TLS service."
 )
@@ -80,6 +82,7 @@ var (
 // global objects / command line settings
 var timeout *int
 var verbose *bool
+var debug *bool
 var start time.Time
 
 /*
@@ -89,6 +92,7 @@ func main() {
 
 	timeout = flag.Int("timeout", 19, "communication timeout in seconds")
 	verbose = flag.Bool("verbose", false, "adds fingerprints, PEM certificate, PEM OCSP response")
+	debug = flag.Bool("debug", false, "prints internal representation of connection, certificate, OCSP response")
 
 	flag.Usage = printUsage
 	flag.Parse()
@@ -112,6 +116,7 @@ func main() {
 	fmt.Printf("Service : %s\n", service)
 	fmt.Printf("Timeout : %d\n", *timeout)
 	fmt.Printf("Verbose : %t\n", *verbose)
+	fmt.Printf("Debug   : %t\n", *debug)
 	fmt.Printf("Time    : %s\n", start.Format("2006-01-02 15:04:05 -0700 MST"))
 
 	// connect to service
@@ -146,6 +151,21 @@ printConnectionState prints some data from the connection state
 func printConnectionState(conn *tls.Conn) {
 
 	state := conn.ConnectionState()
+
+	fmt.Printf("\nTLS CONNECTION DETAILS ...\n")
+	fmt.Printf("Version           : %d (%#04x, %s)\n", state.Version, state.Version, getTLSVersion(state.Version))
+	fmt.Printf("HandshakeComplete : %t\n", state.HandshakeComplete)
+	fmt.Printf("CipherSuite       : %d (%#04x, %s)\n", state.CipherSuite, state.CipherSuite, getCipherSuite(state.CipherSuite))
+
+	if *debug {
+		printDump("connection state", state)
+	}
+
+	localAddr := conn.LocalAddr()
+	remoteAddr := conn.RemoteAddr()
+	fmt.Printf("\nNETWORK ADDRESS DETAILS ...\n")
+	fmt.Printf("LocalAddr  : %s\n", localAddr.String())
+	fmt.Printf("RemoteAddr : %s\n", remoteAddr.String())
 
 	var issuerCertificate *x509.Certificate
 	var issuerCommonName string
@@ -291,8 +311,11 @@ printCertificateDetails prints important certificate details / information
 */
 func printCertificateDetails(certificate *x509.Certificate) {
 
-	// fmt.Printf("certificate (dump) ...\n%s\n", spew.Sdump(certificate))
+	if *debug {
+		printDump("certificate", certificate)
+	}
 
+	// basics
 	fmt.Printf("SignatureAlgorithm    : %s\n", certificate.SignatureAlgorithm)
 	fmt.Printf("PublicKeyAlgorithm    : %s\n", certificate.PublicKeyAlgorithm)
 	fmt.Printf("Version               : %v\n", certificate.Version)
@@ -303,8 +326,12 @@ func printCertificateDetails(certificate *x509.Certificate) {
 	fmt.Printf("NotBefore             : %s (valid for %d days)\n", certificate.NotBefore, diff/(time.Hour*24))
 	diff = certificate.NotAfter.Sub(start)
 	fmt.Printf("NotAfter              : %s (expires in %d days)\n", certificate.NotAfter, diff/(time.Hour*24))
-	keyUsages := buildKeyUsages(certificate.KeyUsage)
-	fmt.Printf("KeyUsage              : %v (%b, %s)\n", certificate.KeyUsage, certificate.KeyUsage, strings.Join(keyUsages, ", "))
+
+	// extensions (optional)
+	if certificate.KeyUsage > 0 {
+		keyUsages := buildKeyUsages(certificate.KeyUsage)
+		fmt.Printf("KeyUsage              : %v (%b, %s)\n", certificate.KeyUsage, certificate.KeyUsage, strings.Join(keyUsages, ", "))
+	}
 	if len(certificate.ExtKeyUsage) > 0 {
 		extKeyUsages := buildExtKeyUsages(certificate.ExtKeyUsage)
 		fmt.Printf("ExtKeyUsage           : %s\n", strings.Join(extKeyUsages, ", "))
@@ -324,6 +351,13 @@ func printCertificateDetails(certificate *x509.Certificate) {
 	if len(certificate.CRLDistributionPoints) > 0 {
 		fmt.Printf("CRLDistributionPoints : %s\n", strings.Join(certificate.CRLDistributionPoints, ", "))
 	}
+	if len(certificate.SubjectKeyId) > 0 {
+		fmt.Printf("SubjectKeyId          : %s\n", hex.EncodeToString(certificate.SubjectKeyId))
+	}
+	if len(certificate.AuthorityKeyId) > 0 {
+		fmt.Printf("AuthorityKeyId        : %s\n", hex.EncodeToString(certificate.AuthorityKeyId))
+	}
+
 	if *verbose {
 		sha1Fingerprint := sha1.Sum(certificate.Raw)
 		fmt.Printf("SHA1Fingerprint       : %s\n", hex.EncodeToString(sha1Fingerprint[:]))
@@ -346,7 +380,9 @@ func printOCSPDetails(rawOCSPResponse []byte, issuer *x509.Certificate) {
 		return
 	}
 
-	// fmt.Printf("OCSP response (dump) ...\n%s\n", spew.Sdump(response))
+	if *debug {
+		printDump("OCSP response", response)
+	}
 
 	statusText := "error: unrecognised OCSP status"
 	switch response.Status {
@@ -456,7 +492,7 @@ func buildKeyUsages(keyUsage x509.KeyUsage) []string {
 	var keyUsageList []string
 
 	if keyUsage >= (1 << 9) {
-		keyUsageList = append(keyUsageList, "UnknownUsage")
+		keyUsageList = append(keyUsageList, "Unknown")
 	}
 	if Has(keyUsage, x509.KeyUsageDecipherOnly) {
 		keyUsageList = append(keyUsageList, "DecipherOnly")
@@ -533,7 +569,7 @@ func buildExtKeyUsages(extKeyUsage []x509.ExtKeyUsage) []string {
 		case x509.ExtKeyUsageMicrosoftKernelCodeSigning:
 			extKeyUsageList = append(extKeyUsageList, "MicrosoftKernelCodeSigning")
 		default:
-			extKeyUsageList = append(extKeyUsageList, "UnknownUsage")
+			extKeyUsageList = append(extKeyUsageList, "Unknown")
 		}
 	}
 
@@ -578,13 +614,109 @@ func printOCSPResonsePEM(rawOCSPResponse []byte) {
 	fmt.Printf("\n%s", pemBuffer.String())
 }
 
+/*
+printDump prints (dumps) an arbitrary data object
+*/
+func printDump(objectname string, object interface{}) {
+
+	fmt.Printf("\n-----BEGIN DUMP %s-----\n", objectname)
+	fmt.Printf("%s", spew.Sdump(object))
+	fmt.Printf("-----END DUMP %s-----\n\n", objectname)
+}
+
+/*
+getTLSVersion gets the TLS version literal
+*/
+func getTLSVersion(version uint16) string {
+
+	switch version {
+	case tls.VersionSSL30:
+		return "SSL30"
+	case tls.VersionTLS10:
+		return "TLS10"
+	case tls.VersionTLS11:
+		return "TLS11"
+	case tls.VersionTLS12:
+		return "TLS12"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+/*
+getCipherSuite gets the Cipher Suite literal
+*/
+func getCipherSuite(cipherSuite uint16) string {
+
+	switch cipherSuite {
+	case tls.TLS_RSA_WITH_RC4_128_SHA:
+		return "RSA_WITH_RC4_128_SHA"
+	case tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:
+		return "RSA_WITH_3DES_EDE_CBC_SHA"
+	case tls.TLS_RSA_WITH_AES_128_CBC_SHA:
+		return "RSA_WITH_AES_128_CBC_SHA"
+	case tls.TLS_RSA_WITH_AES_256_CBC_SHA:
+		return "RSA_WITH_AES_256_CBC_SHA"
+	case tls.TLS_RSA_WITH_AES_128_CBC_SHA256:
+		return "RSA_WITH_AES_128_CBC_SHA256"
+	case tls.TLS_RSA_WITH_AES_128_GCM_SHA256:
+		return "RSA_WITH_AES_128_GCM_SHA256"
+	case tls.TLS_RSA_WITH_AES_256_GCM_SHA384:
+		return "RSA_WITH_AES_256_GCM_SHA384"
+	case tls.TLS_ECDHE_ECDSA_WITH_RC4_128_SHA:
+		return "ECDHE_ECDSA_WITH_RC4_128_SHA"
+	case tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:
+		return "ECDHE_ECDSA_WITH_AES_128_CBC_SHA"
+	case tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA:
+		return "ECDHE_ECDSA_WITH_AES_256_CBC_SHA"
+	case tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA:
+		return "ECDHE_RSA_WITH_RC4_128_SHA"
+	case tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA:
+		return "ECDHE_RSA_WITH_3DES_EDE_CBC_SHA"
+	case tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:
+		return "ECDHE_RSA_WITH_AES_128_CBC_SHA"
+	case tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:
+		return "ECDHE_RSA_WITH_AES_256_CBC_SHA"
+	case tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256:
+		return "ECDHE_ECDSA_WITH_AES_128_CBC_SHA256"
+	case tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256:
+		return "ECDHE_RSA_WITH_AES_128_CBC_SHA256"
+	case tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
+		return "ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+	case tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
+		return "ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"
+	case tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:
+		return "ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+	case tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
+		return "ECDHE_ECDSA_WITH_AES_256_GCM_SHA384"
+	case tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305:
+		return "ECDHE_RSA_WITH_CHACHA20_POLY1305"
+	case tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305:
+		return "ECDHE_ECDSA_WITH_CHACHA20_POLY1305"
+	case tls.TLS_FALLBACK_SCSV:
+		return "FALLBACK_SCSV"
+	default:
+		return "UNKNOWN"
+	}
+}
+
 // reference output (for 'example.com:443')
 var referenceOutput = `
   GENERAL INFORMATION ...
   Service : example.com:443
   Timeout : 19
   Verbose : false
-  Time    : 2018-09-25 08:58:58 +0200 CEST
+  Debug   : false
+  Time    : 2018-09-26 08:42:27 +0200 CEST
+  
+  TLS CONNECTION DETAILS ...
+  Version           : 771 (0x0303, TLS12)
+  HandshakeComplete : true
+  CipherSuite       : 49199 (0xc02f, ECDHE_RSA_WITH_AES_128_GCM_SHA256)
+  
+  NETWORK ADDRESS DETAILS ...
+  LocalAddr  : 192.168.178.55:61680
+  RemoteAddr : 93.184.216.34:443
   
   CERTIFICATE DETAILS ...
   SignatureAlgorithm    : SHA256-RSA
@@ -594,7 +726,7 @@ var referenceOutput = `
   Subject               : CN=www.example.org,OU=Technology,O=Internet Corporation for Assigned Names and Numbers,L=Los Angeles,ST=California,C=US
   Issuer                : CN=DigiCert SHA2 High Assurance Server CA,OU=www.digicert.com,O=DigiCert Inc,C=US
   NotBefore             : 2015-11-03 00:00:00 +0000 UTC (valid for 1121 days)
-  NotAfter              : 2018-11-28 12:00:00 +0000 UTC (expires in 64 days)
+  NotAfter              : 2018-11-28 12:00:00 +0000 UTC (expires in 63 days)
   KeyUsage              : 5 (101, KeyEncipherment, DigitalSignature)
   ExtKeyUsage           : ServerAuth, ClientAuth
   IsCA                  : false
@@ -602,6 +734,8 @@ var referenceOutput = `
   OCSPServer            : http://ocsp.digicert.com
   IssuingCertificateURL : http://cacerts.digicert.com/DigiCertSHA2HighAssuranceServerCA.crt
   CRLDistributionPoints : http://crl3.digicert.com/sha2-ha-server-g4.crl, http://crl4.digicert.com/sha2-ha-server-g4.crl
+  SubjectKeyId          : a64f601e1f2dd1e7f123a02a9516e4e89aea6e48
+  AuthorityKeyId        : 5168ff90af0207753cccd9656462a212b859723b
   
   CERTIFICATE DETAILS ...
   SignatureAlgorithm    : SHA256-RSA
@@ -611,28 +745,30 @@ var referenceOutput = `
   Subject               : CN=DigiCert SHA2 High Assurance Server CA,OU=www.digicert.com,O=DigiCert Inc,C=US
   Issuer                : CN=DigiCert High Assurance EV Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US
   NotBefore             : 2013-10-22 12:00:00 +0000 UTC (valid for 5479 days)
-  NotAfter              : 2028-10-22 12:00:00 +0000 UTC (expires in 3680 days)
+  NotAfter              : 2028-10-22 12:00:00 +0000 UTC (expires in 3679 days)
   KeyUsage              : 97 (1100001, CRLSign, CertSign, DigitalSignature)
   ExtKeyUsage           : ServerAuth, ClientAuth
   IsCA                  : true
   OCSPServer            : http://ocsp.digicert.com
   CRLDistributionPoints : http://crl4.digicert.com/DigiCertHighAssuranceEVRootCA.crl
+  SubjectKeyId          : 5168ff90af0207753cccd9656462a212b859723b
+  AuthorityKeyId        : b13ec36903f8bf4701d498261a0802ef63642bc3
   
   OCSP DETAILS - STAPLED INFORMATION ...
   Status           : 0 (Good)
   SerialNumber     : 19132437207909210467858529073412672688
-  ProducedAt       : 2018-09-24 21:39:57 +0000 UTC
-  ThisUpdate       : 2018-09-24 21:39:57 +0000 UTC (was provided 9 hours ago)
-  NextUpdate       : 2018-10-01 20:54:57 +0000 UTC (will be provided in 157 hours)
+  ProducedAt       : 2018-09-25 15:40:01 +0000 UTC
+  ThisUpdate       : 2018-09-25 15:40:01 +0000 UTC (was provided 15 hours ago)
+  NextUpdate       : 2018-10-02 14:55:01 +0000 UTC (will be provided in 152 hours)
   RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
   RevocationReason : 0 (Unspecified)
   
   OCSP DETAILS - SERVICE RESPONSE ...
   Status           : 0 (Good)
   SerialNumber     : 19132437207909210467858529073412672688
-  ProducedAt       : 2018-09-25 03:39:55 +0000 UTC
-  ThisUpdate       : 2018-09-25 03:39:55 +0000 UTC (was provided 3 hours ago)
-  NextUpdate       : 2018-10-02 02:54:55 +0000 UTC (will be provided in 163 hours)
+  ProducedAt       : 2018-09-26 03:39:54 +0000 UTC
+  ThisUpdate       : 2018-09-26 03:39:54 +0000 UTC (was provided 3 hours ago)
+  NextUpdate       : 2018-10-03 02:54:54 +0000 UTC (will be provided in 164 hours)
   RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
   RevocationReason : 0 (Unspecified)
 `

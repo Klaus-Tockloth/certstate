@@ -7,11 +7,11 @@
 ## Usage
 
 ```txt
-$ ./certstate -help
+$ ./certstate  -help
 
 Program:
   Name    : ./certstate
-  Release : 0.3.0 - 2018/09/25
+  Release : 0.4.0 - 2018/09/26
   Purpose : monitor public key certificate
   Info    : Prints public key certificate details offered by TLS service.
 
@@ -84,10 +84,12 @@ Examples:
   ./certstate -verbose example.com:443
 
 Options:
+  -debug
+      prints internal representation of connection, certificate, OCSP response
   -timeout int
-    	communication timeout in seconds (default 19)
+      communication timeout in seconds (default 19)
   -verbose
-    	adds fingerprints, PEM certificate, PEM OCSP response
+      adds fingerprints, PEM certificate, PEM OCSP response
 
 Arguments:
   address:port
@@ -105,7 +107,17 @@ Reference output (nonverbose):
   Service : example.com:443
   Timeout : 19
   Verbose : false
-  Time    : 2018-09-25 08:58:58 +0200 CEST
+  Debug   : false
+  Time    : 2018-09-26 08:42:27 +0200 CEST
+  
+  TLS CONNECTION DETAILS ...
+  Version           : 771 (0x0303, TLS12)
+  HandshakeComplete : true
+  CipherSuite       : 49199 (0xc02f, ECDHE_RSA_WITH_AES_128_GCM_SHA256)
+  
+  NETWORK ADDRESS DETAILS ...
+  LocalAddr  : 192.168.178.55:61680
+  RemoteAddr : 93.184.216.34:443
   
   CERTIFICATE DETAILS ...
   SignatureAlgorithm    : SHA256-RSA
@@ -115,7 +127,7 @@ Reference output (nonverbose):
   Subject               : CN=www.example.org,OU=Technology,O=Internet Corporation for Assigned Names and Numbers,L=Los Angeles,ST=California,C=US
   Issuer                : CN=DigiCert SHA2 High Assurance Server CA,OU=www.digicert.com,O=DigiCert Inc,C=US
   NotBefore             : 2015-11-03 00:00:00 +0000 UTC (valid for 1121 days)
-  NotAfter              : 2018-11-28 12:00:00 +0000 UTC (expires in 64 days)
+  NotAfter              : 2018-11-28 12:00:00 +0000 UTC (expires in 63 days)
   KeyUsage              : 5 (101, KeyEncipherment, DigitalSignature)
   ExtKeyUsage           : ServerAuth, ClientAuth
   IsCA                  : false
@@ -123,6 +135,8 @@ Reference output (nonverbose):
   OCSPServer            : http://ocsp.digicert.com
   IssuingCertificateURL : http://cacerts.digicert.com/DigiCertSHA2HighAssuranceServerCA.crt
   CRLDistributionPoints : http://crl3.digicert.com/sha2-ha-server-g4.crl, http://crl4.digicert.com/sha2-ha-server-g4.crl
+  SubjectKeyId          : a64f601e1f2dd1e7f123a02a9516e4e89aea6e48
+  AuthorityKeyId        : 5168ff90af0207753cccd9656462a212b859723b
   
   CERTIFICATE DETAILS ...
   SignatureAlgorithm    : SHA256-RSA
@@ -132,28 +146,30 @@ Reference output (nonverbose):
   Subject               : CN=DigiCert SHA2 High Assurance Server CA,OU=www.digicert.com,O=DigiCert Inc,C=US
   Issuer                : CN=DigiCert High Assurance EV Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US
   NotBefore             : 2013-10-22 12:00:00 +0000 UTC (valid for 5479 days)
-  NotAfter              : 2028-10-22 12:00:00 +0000 UTC (expires in 3680 days)
+  NotAfter              : 2028-10-22 12:00:00 +0000 UTC (expires in 3679 days)
   KeyUsage              : 97 (1100001, CRLSign, CertSign, DigitalSignature)
   ExtKeyUsage           : ServerAuth, ClientAuth
   IsCA                  : true
   OCSPServer            : http://ocsp.digicert.com
   CRLDistributionPoints : http://crl4.digicert.com/DigiCertHighAssuranceEVRootCA.crl
+  SubjectKeyId          : 5168ff90af0207753cccd9656462a212b859723b
+  AuthorityKeyId        : b13ec36903f8bf4701d498261a0802ef63642bc3
   
   OCSP DETAILS - STAPLED INFORMATION ...
   Status           : 0 (Good)
   SerialNumber     : 19132437207909210467858529073412672688
-  ProducedAt       : 2018-09-24 21:39:57 +0000 UTC
-  ThisUpdate       : 2018-09-24 21:39:57 +0000 UTC (was provided 9 hours ago)
-  NextUpdate       : 2018-10-01 20:54:57 +0000 UTC (will be provided in 157 hours)
+  ProducedAt       : 2018-09-25 15:40:01 +0000 UTC
+  ThisUpdate       : 2018-09-25 15:40:01 +0000 UTC (was provided 15 hours ago)
+  NextUpdate       : 2018-10-02 14:55:01 +0000 UTC (will be provided in 152 hours)
   RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
   RevocationReason : 0 (Unspecified)
   
   OCSP DETAILS - SERVICE RESPONSE ...
   Status           : 0 (Good)
   SerialNumber     : 19132437207909210467858529073412672688
-  ProducedAt       : 2018-09-25 03:39:55 +0000 UTC
-  ThisUpdate       : 2018-09-25 03:39:55 +0000 UTC (was provided 3 hours ago)
-  NextUpdate       : 2018-10-02 02:54:55 +0000 UTC (will be provided in 163 hours)
+  ProducedAt       : 2018-09-26 03:39:54 +0000 UTC
+  ThisUpdate       : 2018-09-26 03:39:54 +0000 UTC (was provided 3 hours ago)
+  NextUpdate       : 2018-10-03 02:54:54 +0000 UTC (will be provided in 164 hours)
   RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
   RevocationReason : 0 (Unspecified)
 ```
@@ -174,4 +190,8 @@ The master branch is used for program development and may be unstable.
 
 ### 0.3.0, 2018/09/25
 
-- time calculations, ExtKeyUsage, fingerprints added
+- added: time calculations, ExtKeyUsage, fingerprints
+
+### 0.4.0, 2018/09/26
+
+- added: SubjectKeyId, AuthorityKeyId, debug option, connection details, network details
