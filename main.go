@@ -11,6 +11,7 @@ Releases:
 - 0.3.0 - 2018/09/25 : added: time calculations, ExtKeyUsage, fingerprints
 - 0.4.0 - 2018/09/26 : added: SubjectKeyId, AuthorityKeyId, debug option, connection details, network details
 - 0.5.0 - 2018/09/27 : added: PolicyIdentifiers
+- 0.5.1 - 2018/09/27 : small corrections
 
 Author:
 - Klaus Tockloth
@@ -80,7 +81,7 @@ import (
 // general program info
 var (
 	progName    = os.Args[0]
-	progVersion = "0.5.0"
+	progVersion = "0.5.1"
 	progDate    = "2018/09/27"
 	progPurpose = "monitor public key certificate"
 	progInfo    = "Prints public key certificate details offered by TLS service."
@@ -254,7 +255,7 @@ func printUsage() {
 		"  - 100000000 = DecipherOnly\n" +
 		"\n" +
 		"Possible certificate 'ExtKeyUsage' values:\n" +
-		"  - Any ExtKeyUsage\n" +
+		"  - Any\n" +
 		"  - ServerAuth\n" +
 		"  - ClientAuth\n" +
 		"  - CodeSigning\n" +
