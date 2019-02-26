@@ -16,7 +16,7 @@
 set -o verbose
 
 # define application name
-appname=./certstate
+appname="./certstate -verbose"
 
 # define separator (for better readability)
 separator="\n------------------------------------------------------------------------------------------------------------\n"

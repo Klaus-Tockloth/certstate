@@ -12,12 +12,13 @@ Releases:
 - 0.4.0 - 2018/09/26 : added: SubjectKeyId, AuthorityKeyId, debug option, connection details, network details
 - 0.5.0 - 2018/09/27 : added: PolicyIdentifiers
 - 0.5.1 - 2018/09/27 : small corrections
+- 0.6.0 - 2019/02/26 : TLS 1.3 support (requires Go 1.12)
 
 Author:
 - Klaus Tockloth
 
 Copyright and license:
-- Copyright (c) 2018 Klaus Tockloth
+- Copyright (c) 2018,2019 Klaus Tockloth
 - MIT license
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software
@@ -81,8 +82,8 @@ import (
 // general program info
 var (
 	progName    = os.Args[0]
-	progVersion = "0.5.1"
-	progDate    = "2018/09/27"
+	progVersion = "0.6.0"
+	progDate    = "2019/02/26"
 	progPurpose = "monitor public key certificate"
 	progInfo    = "Prints public key certificate details offered by TLS service."
 )
@@ -92,6 +93,14 @@ var timeout *int
 var verbose *bool
 var debug *bool
 var start time.Time
+
+/*
+init initializes this package
+*/
+func init() {
+
+	os.Setenv("GODEBUG", os.Getenv("GODEBUG")+",tls13=1")
+}
 
 /*
 main starts this program
@@ -653,6 +662,8 @@ func getTLSVersion(version uint16) string {
 		return "VersionTLS11"
 	case tls.VersionTLS12:
 		return "VersionTLS12"
+	case tls.VersionTLS13:
+		return "VersionTLS13"
 	default:
 		return "UNKNOWN"
 	}
@@ -664,6 +675,7 @@ getCipherSuite gets the Cipher Suite literal
 func getCipherSuite(cipherSuite uint16) string {
 
 	switch cipherSuite {
+	// TLS 1.0 - 1.2 cipher suites
 	case tls.TLS_RSA_WITH_RC4_128_SHA:
 		return "TLS_RSA_WITH_RC4_128_SHA"
 	case tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:
@@ -708,6 +720,14 @@ func getCipherSuite(cipherSuite uint16) string {
 		return "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305"
 	case tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305:
 		return "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305"
+	// TLS 1.3 cipher suites
+	case tls.TLS_AES_128_GCM_SHA256:
+		return "TLS_AES_128_GCM_SHA256"
+	case tls.TLS_AES_256_GCM_SHA384:
+		return "TLS_AES_256_GCM_SHA384"
+	case tls.TLS_CHACHA20_POLY1305_SHA256:
+		return "TLS_CHACHA20_POLY1305_SHA256"
+	// TLS_FALLBACK_SCSV isn't a standard cipher suite but an indicator that the client is doing version fallback. See RFC 7507.
 	case tls.TLS_FALLBACK_SCSV:
 		return "TLS_FALLBACK_SCSV"
 	default:
@@ -722,70 +742,83 @@ var referenceOutput = `
   Timeout : 19
   Verbose : false
   Debug   : false
-  Time    : 2018-09-27 12:09:22 +0200 CEST
-  
+  Time    : 2019-02-26 11:00:45 +0100 CET
+
   TLS CONNECTION DETAILS ...
-  Version           : 771 (0x0303, VersionTLS12)
+  Version           : 772 (0x0304, VersionTLS13)
   HandshakeComplete : true
-  CipherSuite       : 49199 (0xc02f, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256)
-  
+  CipherSuite       : 4866 (0x1302, TLS_AES_256_GCM_SHA384)
+
   NETWORK ADDRESS DETAILS ...
-  LocalAddr  : 192.168.178.55:56054
+  LocalAddr  : 192.168.178.55:54968
   RemoteAddr : 93.184.216.34:443
-  
+
   CERTIFICATE DETAILS ...
   SignatureAlgorithm    : SHA256-RSA
   PublicKeyAlgorithm    : RSA
   Version               : 3
-  SerialNumber          : 19132437207909210467858529073412672688
+  SerialNumber          : 21020869104500376438182461249190639870
   Subject               : CN=www.example.org,OU=Technology,O=Internet Corporation for Assigned Names and Numbers,L=Los Angeles,ST=California,C=US
-  Issuer                : CN=DigiCert SHA2 High Assurance Server CA,OU=www.digicert.com,O=DigiCert Inc,C=US
-  NotBefore             : 2015-11-03 00:00:00 +0000 UTC (valid for 1121 days)
-  NotAfter              : 2018-11-28 12:00:00 +0000 UTC (expires in 62 days)
+  Issuer                : CN=DigiCert SHA2 Secure Server CA,O=DigiCert Inc,C=US
+  NotBefore             : 2018-11-28 00:00:00 +0000 UTC (valid for 735 days)
+  NotAfter              : 2020-12-02 12:00:00 +0000 UTC (expires in 645 days)
   KeyUsage              : 5 (101, KeyEncipherment, DigitalSignature)
   ExtKeyUsage           : ServerAuth, ClientAuth
   IsCA                  : false
   DNSNames              : www.example.org, example.com, example.edu, example.net, example.org, www.example.com, www.example.edu, www.example.net
   OCSPServer            : http://ocsp.digicert.com
-  IssuingCertificateURL : http://cacerts.digicert.com/DigiCertSHA2HighAssuranceServerCA.crt
-  CRLDistributionPoints : http://crl3.digicert.com/sha2-ha-server-g4.crl, http://crl4.digicert.com/sha2-ha-server-g4.crl
+  IssuingCertificateURL : http://cacerts.digicert.com/DigiCertSHA2SecureServerCA.crt
+  CRLDistributionPoints : http://crl3.digicert.com/ssca-sha2-g6.crl, http://crl4.digicert.com/ssca-sha2-g6.crl
   PolicyIdentifiers     : 2.16.840.1.114412.1.1, 2.23.140.1.2.2
-  SubjectKeyId          : a64f601e1f2dd1e7f123a02a9516e4e89aea6e48
-  AuthorityKeyId        : 5168ff90af0207753cccd9656462a212b859723b
-  
+  SubjectKeyId          : 66986202e00991a7d9e336fb76c6b0bfa16da7be
+  AuthorityKeyId        : 0f80611c823161d52f28e78d4638b42ce1c6d9e2
+
   CERTIFICATE DETAILS ...
   SignatureAlgorithm    : SHA256-RSA
   PublicKeyAlgorithm    : RSA
   Version               : 3
-  SerialNumber          : 6489877074546166222510380951761917343
-  Subject               : CN=DigiCert SHA2 High Assurance Server CA,OU=www.digicert.com,O=DigiCert Inc,C=US
-  Issuer                : CN=DigiCert High Assurance EV Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US
-  NotBefore             : 2013-10-22 12:00:00 +0000 UTC (valid for 5479 days)
-  NotAfter              : 2028-10-22 12:00:00 +0000 UTC (expires in 3678 days)
+  SerialNumber          : 2646203786665923649276728595390119057
+  Subject               : CN=DigiCert SHA2 Secure Server CA,O=DigiCert Inc,C=US
+  Issuer                : CN=DigiCert Global Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US
+  NotBefore             : 2013-03-08 12:00:00 +0000 UTC (valid for 3652 days)
+  NotAfter              : 2023-03-08 12:00:00 +0000 UTC (expires in 1471 days)
   KeyUsage              : 97 (1100001, CRLSign, CertSign, DigitalSignature)
-  ExtKeyUsage           : ServerAuth, ClientAuth
   IsCA                  : true
   OCSPServer            : http://ocsp.digicert.com
-  CRLDistributionPoints : http://crl4.digicert.com/DigiCertHighAssuranceEVRootCA.crl
+  CRLDistributionPoints : http://crl3.digicert.com/DigiCertGlobalRootCA.crl, http://crl4.digicert.com/DigiCertGlobalRootCA.crl
   PolicyIdentifiers     : 2.5.29.32.0
-  SubjectKeyId          : 5168ff90af0207753cccd9656462a212b859723b
-  AuthorityKeyId        : b13ec36903f8bf4701d498261a0802ef63642bc3
-  
+  SubjectKeyId          : 0f80611c823161d52f28e78d4638b42ce1c6d9e2
+  AuthorityKeyId        : 03de503556d14cbb66f0a3e21b1bc397b23dd155
+
+  CERTIFICATE DETAILS ...
+  SignatureAlgorithm    : SHA1-RSA
+  PublicKeyAlgorithm    : RSA
+  Version               : 3
+  SerialNumber          : 10944719598952040374951832963794454346
+  Subject               : CN=DigiCert Global Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US
+  Issuer                : CN=DigiCert Global Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US
+  NotBefore             : 2006-11-10 00:00:00 +0000 UTC (valid for 9131 days)
+  NotAfter              : 2031-11-10 00:00:00 +0000 UTC (expires in 4639 days)
+  KeyUsage              : 97 (1100001, CRLSign, CertSign, DigitalSignature)
+  IsCA                  : true
+  SubjectKeyId          : 03de503556d14cbb66f0a3e21b1bc397b23dd155
+  AuthorityKeyId        : 03de503556d14cbb66f0a3e21b1bc397b23dd155
+
   OCSP DETAILS - STAPLED INFORMATION ...
   Status           : 0 (Good)
-  SerialNumber     : 19132437207909210467858529073412672688
-  ProducedAt       : 2018-09-26 21:40:02 +0000 UTC
-  ThisUpdate       : 2018-09-26 21:40:02 +0000 UTC (was provided 12 hours ago)
-  NextUpdate       : 2018-10-03 20:55:02 +0000 UTC (will be provided in 154 hours)
+  SerialNumber     : 21020869104500376438182461249190639870
+  ProducedAt       : 2019-02-25 06:26:59 +0000 UTC
+  ThisUpdate       : 2019-02-25 06:26:59 +0000 UTC (was provided 27 hours ago)
+  NextUpdate       : 2019-03-04 05:41:59 +0000 UTC (will be provided in 139 hours)
   RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
   RevocationReason : 0 (Unspecified)
-  
+
   OCSP DETAILS - SERVICE RESPONSE ...
   Status           : 0 (Good)
-  SerialNumber     : 19132437207909210467858529073412672688
-  ProducedAt       : 2018-09-27 03:39:56 +0000 UTC
-  ThisUpdate       : 2018-09-27 03:39:56 +0000 UTC (was provided 6 hours ago)
-  NextUpdate       : 2018-10-04 02:54:56 +0000 UTC (will be provided in 160 hours)
+  SerialNumber     : 21020869104500376438182461249190639870
+  ProducedAt       : 2019-02-26 06:26:58 +0000 UTC
+  ThisUpdate       : 2019-02-26 06:26:58 +0000 UTC (was provided 3 hours ago)
+  NextUpdate       : 2019-03-05 05:41:58 +0000 UTC (will be provided in 163 hours)
   RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
   RevocationReason : 0 (Unspecified)
 `
