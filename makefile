@@ -4,8 +4,9 @@
 # makefile adapted from this example:
 # http://stackoverflow.com/documentation/go/1020/cross-compilation#t=201703051136361578518
 #
-# version 1.0.0 - 2018/09/23: initial release
-# version 1.1.0 - 2018/09/26: 386 support removed
+# releases:
+# - v1.0.0 - 2018/09/23: initial release
+# - v1.1.0 - 2018/09/26: 386 support removed
 
 appname := certstate
 sources := $(wildcard *.go)

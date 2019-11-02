@@ -4,9 +4,10 @@
 # Function:
 # - Testsuite.
 #
-# Version:
-# - 0.1.0 - 2018/09/22 initial release
-# - 0.2.0 - 2018/09/27 added: some domains
+# Releases:
+# - v0.1.0 - 2018/09/22 initial release
+# - v0.2.0 - 2018/09/27 added: some domains
+# - v0.3.0 - 2019/11/02 cli params added
 #
 # Usage:
 # - sh testsuite.sh >testsuite.out
@@ -16,7 +17,8 @@
 set -o verbose
 
 # define application name
-appname="./certstate -verbose"
+# appname="./certstate -verbose"
+appname="./certstate -ocsp -crl"
 
 # define separator (for better readability)
 separator="\n------------------------------------------------------------------------------------------------------------\n"

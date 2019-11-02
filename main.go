@@ -6,19 +6,20 @@ Description:
 - Prints public key certificate details offered by TLS service.
 
 Releases:
-- 0.1.0 - 2018/09/23 : initial release
-- 0.2.0 - 2018/09/24 : output format modified, verbose mode implemented
-- 0.3.0 - 2018/09/25 : added: time calculations, ExtKeyUsage, fingerprints
-- 0.4.0 - 2018/09/26 : added: SubjectKeyId, AuthorityKeyId, debug option, connection details, network details
-- 0.5.0 - 2018/09/27 : added: PolicyIdentifiers
-- 0.5.1 - 2018/09/27 : small corrections
-- 0.6.0 - 2019/02/26 : TLS 1.3 support (requires Go 1.12)
+- v0.1.0 - 2018/09/23 : initial release
+- v0.2.0 - 2018/09/24 : output format modified, verbose mode implemented
+- v0.3.0 - 2018/09/25 : added: time calculations, ExtKeyUsage, fingerprints
+- v0.4.0 - 2018/09/26 : added: SubjectKeyId, AuthorityKeyId, debug option, connection details, network details
+- v0.5.0 - 2018/09/27 : added: PolicyIdentifiers
+- v0.5.1 - 2018/09/27 : small corrections
+- v0.6.0 - 2019/02/26 : TLS 1.3 support (requires Go 1.12)
+- v0.7.0 - 2019/11/02 : CRL support added, code restructed, options -ocsp and -crl added
 
 Author:
 - Klaus Tockloth
 
 Copyright and license:
-- Copyright (c) 2018,2019 Klaus Tockloth
+- Copyright (c) 2018, 2019 Klaus Tockloth
 - MIT license
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software
@@ -40,67 +41,54 @@ Contact (eMail):
 - freizeitkarte@googlemail.com
 
 Remarks:
-- Possible improvements (nice-to-have):
-  - Find issuer certificate by using "AuthorityKeyId" instead of "Issuer-CN".
-  - Load missing issuer certificate if the leaf certificate has "IssuingCertificateURL".
-  - Implement support for certificate revocation lists (CRLs).
-  - Show textual meaning of "PolicyIdentifiers" (eg. DV, OV, EV).
-  - Print operating system hostname for local address.
-  - Print DNS details (records) for remote address.
+- Requires go 1.13 (or higher).
 
-Links:
+- OSCP server (multiple servers possible):
+  No CA found, which provides more than one OCSP server.
+
+- CRL Distribution Points (CDP, multiple CDPs often provided):
+  This program downloads and checks every CRL (maybe overacted).
+  CDPs provides by LDAP URLs are not supported.
+
+  Links:
 - https://godoc.org/golang.org/x/crypto/ocsp
 */
 
 package main
 
 import (
-	"bytes"
-	"crypto"
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
-	"encoding/pem"
-	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"net"
-	"net/http"
-	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
-	"golang.org/x/crypto/ocsp"
 )
 
 // general program info
 var (
-	progName    = os.Args[0]
-	progVersion = "0.6.0"
-	progDate    = "2019/02/26"
+	_, progName = filepath.Split(os.Args[0])
+	progVersion = "v0.7.0"
+	progDate    = "2019/11/02"
 	progPurpose = "monitor public key certificate"
 	progInfo    = "Prints public key certificate details offered by TLS service."
 )
+
+// global constants
+const leftValue = "%-24s : "
 
 // global objects / command line settings
 var timeout *int
 var verbose *bool
 var debug *bool
+var ocspValidation *bool
+var crlValidation *bool
 var start time.Time
-
-/*
-init initializes this package
-*/
-func init() {
-
-	os.Setenv("GODEBUG", os.Getenv("GODEBUG")+",tls13=1")
-}
 
 /*
 main starts this program
@@ -110,6 +98,8 @@ func main() {
 	timeout = flag.Int("timeout", 19, "communication timeout in seconds")
 	verbose = flag.Bool("verbose", false, "adds fingerprints, PEM certificate, PEM OCSP response")
 	debug = flag.Bool("debug", false, "prints internal representation of connection, certificate, OCSP response")
+	ocspValidation = flag.Bool("ocsp", false, "validates leaf certificate against Online Certificate Status Protocol service (OCSP)")
+	crlValidation = flag.Bool("crl", false, "validates leaf certificate against Certificate Revokation List(s) (CRL)")
 
 	flag.Usage = printUsage
 	flag.Parse()
@@ -130,11 +120,14 @@ func main() {
 	start = time.Now()
 
 	fmt.Printf("GENERAL INFORMATION ...\n")
-	fmt.Printf("Service : %s\n", service)
-	fmt.Printf("Timeout : %d\n", *timeout)
-	fmt.Printf("Verbose : %t\n", *verbose)
-	fmt.Printf("Debug   : %t\n", *debug)
-	fmt.Printf("Time    : %s\n", start.Format("2006-01-02 15:04:05 -0700 MST"))
+	fmt.Printf(leftValue+"%s\n", "Command", strings.Join(os.Args, " "))
+	fmt.Printf(leftValue+"%s\n", "Service", service)
+	fmt.Printf(leftValue+"%d\n", "Timeout", *timeout)
+	fmt.Printf(leftValue+"%t\n", "Verbose", *verbose)
+	fmt.Printf(leftValue+"%t\n", "Debug", *debug)
+	fmt.Printf(leftValue+"%t\n", "OCSP", *ocspValidation)
+	fmt.Printf(leftValue+"%t\n", "CRL", *crlValidation)
+	fmt.Printf(leftValue+"%s\n", "Time", start.Format("2006-01-02 15:04:05 -0700 MST"))
 
 	// connect to service
 	config := &tls.Config{
@@ -163,37 +156,27 @@ func main() {
 }
 
 /*
-printConnectionState prints some data from the connection state
+printConnectionState prints data from the connection state
 */
 func printConnectionState(conn *tls.Conn) {
 
 	state := conn.ConnectionState()
 
-	fmt.Printf("\nTLS CONNECTION DETAILS ...\n")
-	fmt.Printf("Version           : %d (%#04x, %s)\n", state.Version, state.Version, getTLSVersion(state.Version))
-	fmt.Printf("HandshakeComplete : %t\n", state.HandshakeComplete)
-	fmt.Printf("CipherSuite       : %d (%#04x, %s)\n", state.CipherSuite, state.CipherSuite, getCipherSuite(state.CipherSuite))
+	// print connection details
+	printConnectionDetails(conn)
 
-	if *debug {
-		printDump("connection state", state)
-	}
-
-	localAddr := conn.LocalAddr()
-	remoteAddr := conn.RemoteAddr()
-	fmt.Printf("\nNETWORK ADDRESS DETAILS ...\n")
-	fmt.Printf("LocalAddr  : %s\n", localAddr.String())
-	fmt.Printf("RemoteAddr : %s\n", remoteAddr.String())
-
+	var leafCertificate *x509.Certificate
 	var issuerCertificate *x509.Certificate
-	var issuerCommonName string
+	var leafAuthorityKeyID string
 
-	// print some public key certificate data
+	// print public key certificate details
 	for index, certificate := range state.PeerCertificates {
 		if index == 0 {
-			issuerCommonName = certificate.Issuer.CommonName
+			leafCertificate = certificate
+			leafAuthorityKeyID = string(certificate.AuthorityKeyId)
 		}
 		if index > 0 {
-			if issuerCommonName == certificate.Subject.CommonName {
+			if leafAuthorityKeyID == string(certificate.SubjectKeyId) {
 				issuerCertificate = certificate
 			}
 		}
@@ -201,26 +184,30 @@ func printConnectionState(conn *tls.Conn) {
 		printCertificateDetails(certificate)
 	}
 
-	// stapled OCSP response from server (if any)
-	if state.OCSPResponse != nil {
-		if issuerCertificate != nil {
-			fmt.Printf("\nOCSP DETAILS - STAPLED INFORMATION ...\n")
-			printOCSPDetails(state.OCSPResponse, issuerCertificate)
+	// print stapled OCSP response from server (if any)
+	if state.OCSPResponse != nil && issuerCertificate != nil {
+		fmt.Printf("\nOCSP DETAILS - STAPLED INFORMATION ...\n")
+		printOCSPDetails(state.OCSPResponse, issuerCertificate)
+	}
+
+	if *ocspValidation {
+		// print response from OCSP server (if defined)
+		if len(leafCertificate.OCSPServer) > 0 && issuerCertificate != nil {
+			fmt.Printf("\nOCSP DETAILS - SERVICE RESPONSE ...\n")
+			rawOCSPResponse, err := fetchOCSPResponseFromService(leafCertificate, issuerCertificate, leafCertificate.OCSPServer[0])
+			if err != nil {
+				fmt.Printf("Error: unable to fetch OCSP state from service, error = %v\n", err)
+			}
+			printOCSPDetails(rawOCSPResponse, issuerCertificate)
 		}
 	}
 
-	// response from OCSP server (if defined)
-	if len(state.PeerCertificates[0].OCSPServer) > 0 {
-		if issuerCertificate != nil {
-			leafCertificate := state.PeerCertificates[0]
-			ocspServer := state.PeerCertificates[0].OCSPServer[0]
-			rawOCSPResponse, err := fetchOCSPResponseFromService(leafCertificate, issuerCertificate, ocspServer)
-			if err != nil {
-				fmt.Printf("Error: unable to fetch OCSP state from service, error = %v\n", err)
-				os.Exit(1)
+	if *crlValidation {
+		// print revocation status from CRLs (if any)
+		if len(leafCertificate.CRLDistributionPoints) > 0 && issuerCertificate != nil {
+			for _, crlDistributionPoint := range leafCertificate.CRLDistributionPoints {
+				printCRLDetails(crlDistributionPoint, leafCertificate.SerialNumber, issuerCertificate)
 			}
-			fmt.Printf("\nOCSP DETAILS - SERVICE RESPONSE ...\n")
-			printOCSPDetails(rawOCSPResponse, issuerCertificate)
 		}
 	}
 }
@@ -240,7 +227,8 @@ func printUsage() {
 		"What does this tool do?\n" +
 		"  - connects to a TLS service and grabs the public key certificate\n" +
 		"  - if certificate contains OCSP stapling data: parses the data\n" +
-		"  - if certificate contains link to OCSP service: requests the status\n" +
+		"  - if requested: validates leaf certificate against OCSP service\n" +
+		"  - if requested: validates leaf certificate against CRL\n" +
 		"  - prints out a subset (the important part) of the collected data\n" +
 		"\n" +
 		"Possible return values:\n" +
@@ -250,7 +238,8 @@ func printUsage() {
 		"How to check the validity of a public key certificate?\n" +
 		"  - assess 'NotBefore' value of leaf certificate\n" +
 		"  - assess 'NotAfter' value of leaf certificate\n" +
-		"  - assess 'Status' value(s) of OCSP response(s)\n" +
+		"  - assess 'CertificateStatus' value(s) of OCSP response(s)\n" +
+		"  - assess 'CertificateStatus' value(s) of CRL validation(s)\n" +
 		"\n" +
 		"Possible certificate 'KeyUsage' values (binary encoded):\n" +
 		"  - 000000001 = DigitalSignature\n" +
@@ -279,7 +268,7 @@ func printUsage() {
 		"  - MicrosoftCommercialCodeSigning\n" +
 		"  - MicrosoftKernelCodeSigning\n" +
 		"\n" +
-		"Possible OCSP 'Status' values:\n" +
+		"Possible OCSP 'CertificateStatus' values:\n" +
 		"  - Good\n" +
 		"  - Revoked\n" +
 		"  - Unknown\n" +
@@ -295,15 +284,23 @@ func printUsage() {
 		"  - 6 = CertificateHold\n" +
 		"  - 8 = RemoveFromCRL\n" +
 		"  - 9 = PrivilegeWithdrawn\n" +
-		"  - 10 = AACompromise\n")
+		"  - 10 = AACompromise\n" +
+		"\n" +
+		"Possible CRL 'CertificateStatus' values:\n" +
+		"  - Good\n" +
+		"  - Revoked\n" +
+		"\n" +
+		"Possible CRL 'RevocationReason' values:\n" +
+		"  - Id=ExtensionId, Value=ExtensionValue\n")
 
 	fmt.Printf("\nUsage:\n")
-	fmt.Printf("  %s [-timeout=sec] [-verbose] address:port\n", progName)
+	fmt.Printf("  %s [-timeout=sec] [-verbose] [-ocsp] [-crl] address:port\n", progName)
 
 	fmt.Printf("\nExamples:\n")
-	fmt.Printf("  %s example.com:443\n", progName)
+	fmt.Printf("  %s -ocsp example.com:443\n", progName)
 	fmt.Printf("  %s -timeout=7 example.com:443\n", progName)
 	fmt.Printf("  %s -verbose example.com:443\n", progName)
+	fmt.Printf("  %s -crl example.com:443\n", progName)
 
 	fmt.Printf("\nOptions:\n")
 	flag.PrintDefaults()
@@ -316,326 +313,12 @@ func printUsage() {
 		"  - The timeout setting will be used:\n" +
 		"    + as connection timeout when requesting the TLS service\n" +
 		"    + as overall timeout when requesting the OCSP service\n" +
+		"    + as overall timeout when fetching a CRL\n" +
 		"  - empty or invalid values are not printed\n")
 
-	fmt.Printf("\nReference output (nonverbose):\n%s\n", referenceOutput)
+	fmt.Printf("\nReference output:\n%s\n", referenceOutput)
 
 	os.Exit(1)
-}
-
-/*
-printCertificateDetails prints important certificate details / information
-*/
-func printCertificateDetails(certificate *x509.Certificate) {
-
-	if *debug {
-		printDump("certificate", certificate)
-	}
-
-	// basics
-	fmt.Printf("SignatureAlgorithm    : %s\n", certificate.SignatureAlgorithm)
-	fmt.Printf("PublicKeyAlgorithm    : %s\n", certificate.PublicKeyAlgorithm)
-	fmt.Printf("Version               : %v\n", certificate.Version)
-	fmt.Printf("SerialNumber          : %s\n", certificate.SerialNumber)
-	fmt.Printf("Subject               : %s\n", certificate.Subject)
-	fmt.Printf("Issuer                : %s\n", certificate.Issuer)
-	diff := certificate.NotAfter.Sub(certificate.NotBefore)
-	fmt.Printf("NotBefore             : %s (valid for %d days)\n", certificate.NotBefore, diff/(time.Hour*24))
-	diff = certificate.NotAfter.Sub(start)
-	fmt.Printf("NotAfter              : %s (expires in %d days)\n", certificate.NotAfter, diff/(time.Hour*24))
-
-	// extensions (optional)
-	if certificate.KeyUsage > 0 {
-		keyUsages := buildKeyUsages(certificate.KeyUsage)
-		fmt.Printf("KeyUsage              : %v (%b, %s)\n", certificate.KeyUsage, certificate.KeyUsage, strings.Join(keyUsages, ", "))
-	}
-	if len(certificate.ExtKeyUsage) > 0 {
-		extKeyUsages := buildExtKeyUsages(certificate.ExtKeyUsage)
-		fmt.Printf("ExtKeyUsage           : %s\n", strings.Join(extKeyUsages, ", "))
-	}
-	if certificate.BasicConstraintsValid {
-		fmt.Printf("IsCA                  : %t\n", certificate.IsCA)
-	}
-	if len(certificate.DNSNames) > 0 {
-		fmt.Printf("DNSNames              : %s\n", strings.Join(certificate.DNSNames, ", "))
-	}
-	if len(certificate.OCSPServer) > 0 {
-		fmt.Printf("OCSPServer            : %s\n", strings.Join(certificate.OCSPServer, ", "))
-	}
-	if len(certificate.IssuingCertificateURL) > 0 {
-		fmt.Printf("IssuingCertificateURL : %s\n", strings.Join(certificate.IssuingCertificateURL, ", "))
-	}
-	if len(certificate.CRLDistributionPoints) > 0 {
-		fmt.Printf("CRLDistributionPoints : %s\n", strings.Join(certificate.CRLDistributionPoints, ", "))
-	}
-	if len(certificate.PolicyIdentifiers) > 0 {
-		var policyIdentifiers []string
-		for _, policyIdentifier := range certificate.PolicyIdentifiers {
-			policyIdentifiers = append(policyIdentifiers, policyIdentifier.String())
-		}
-		fmt.Printf("PolicyIdentifiers     : %s\n", strings.Join(policyIdentifiers, ", "))
-	}
-	if len(certificate.SubjectKeyId) > 0 {
-		fmt.Printf("SubjectKeyId          : %s\n", hex.EncodeToString(certificate.SubjectKeyId))
-	}
-	if len(certificate.AuthorityKeyId) > 0 {
-		fmt.Printf("AuthorityKeyId        : %s\n", hex.EncodeToString(certificate.AuthorityKeyId))
-	}
-
-	if *verbose {
-		sha1Fingerprint := sha1.Sum(certificate.Raw)
-		fmt.Printf("SHA1Fingerprint       : %s\n", hex.EncodeToString(sha1Fingerprint[:]))
-		sha256Fingerprint := sha256.Sum256(certificate.Raw)
-		fmt.Printf("SHA256Fingerprint     : %s\n", hex.EncodeToString(sha256Fingerprint[:]))
-		md5Fingerprint := md5.Sum(certificate.Raw)
-		fmt.Printf("MD5Fingerprint        : %s\n", hex.EncodeToString(md5Fingerprint[:]))
-		printCertificatePEM(certificate.Raw)
-	}
-}
-
-/*
-printOCSPDetails prints important OCSP response details / information
-*/
-func printOCSPDetails(rawOCSPResponse []byte, issuer *x509.Certificate) {
-
-	response, err := ocsp.ParseResponse(rawOCSPResponse, issuer)
-	if err != nil {
-		fmt.Printf("error: parsing raw OSCP response failed\n")
-		return
-	}
-
-	if *debug {
-		printDump("OCSP response", response)
-	}
-
-	statusText := "error: unrecognised OCSP status"
-	switch response.Status {
-	case ocsp.Good:
-		statusText = "Good"
-	case ocsp.Revoked:
-		statusText = "Revoked"
-	case ocsp.Unknown:
-		statusText = "Unknown"
-	case ocsp.ServerFailed:
-		statusText = "ServerFailed"
-	}
-
-	revocationReasonText := "error: unrecognised revocation reason"
-	switch response.RevocationReason {
-	case ocsp.Unspecified:
-		revocationReasonText = "Unspecified"
-	case ocsp.KeyCompromise:
-		revocationReasonText = "KeyCompromise"
-	case ocsp.CACompromise:
-		revocationReasonText = "CACompromise"
-	case ocsp.AffiliationChanged:
-		revocationReasonText = "AffiliationChanged"
-	case ocsp.Superseded:
-		revocationReasonText = "Superseded"
-	case ocsp.CessationOfOperation:
-		revocationReasonText = "CessationOfOperation"
-	case ocsp.CertificateHold:
-		revocationReasonText = "CertificateHold"
-	case ocsp.RemoveFromCRL:
-		revocationReasonText = "RemoveFromCRL"
-	case ocsp.PrivilegeWithdrawn:
-		revocationReasonText = "PrivilegeWithdrawn"
-	case ocsp.AACompromise:
-		revocationReasonText = "AACompromise"
-	}
-
-	fmt.Printf("Status           : %v (%s)\n", response.Status, statusText)
-	fmt.Printf("SerialNumber     : %v\n", response.SerialNumber)
-	fmt.Printf("ProducedAt       : %v\n", response.ProducedAt)
-	diff := start.Sub(response.ThisUpdate)
-	fmt.Printf("ThisUpdate       : %v (was provided %d hours ago)\n", response.ThisUpdate, diff/(time.Hour))
-	diff = response.NextUpdate.Sub(start)
-	fmt.Printf("NextUpdate       : %v (will be provided in %d hours)\n", response.NextUpdate, diff/(time.Hour))
-	fmt.Printf("RevokedAt        : %v\n", response.RevokedAt)
-	fmt.Printf("RevocationReason : %v (%s)\n", response.RevocationReason, revocationReasonText)
-
-	if *verbose {
-		printOCSPResonsePEM(rawOCSPResponse)
-	}
-}
-
-/*
-fetchOCSPResponseFromService fetches certificate state from corresponding OCSP service
-*/
-func fetchOCSPResponseFromService(clientCert, issuerCert *x509.Certificate, ocspServer string) ([]byte, error) {
-
-	opts := &ocsp.RequestOptions{Hash: crypto.SHA1}
-
-	buffer, err := ocsp.CreateRequest(clientCert, issuerCert, opts)
-	if err != nil {
-		message := fmt.Sprintf("error: error <%v> at ocsp.CreateRequest()", err)
-		return nil, errors.New(message)
-	}
-
-	httpRequest, err := http.NewRequest(http.MethodPost, ocspServer, bytes.NewBuffer(buffer))
-	if err != nil {
-		message := fmt.Sprintf("error: error <%v> at http.NewRequest()", err)
-		return nil, errors.New(message)
-	}
-
-	ocspURL, err := url.Parse(ocspServer)
-	if err != nil {
-		message := fmt.Sprintf("error: error <%v> at url.Parse()", err)
-		return nil, errors.New(message)
-	}
-
-	httpRequest.Header.Add("Content-Type", "application/ocsp-request")
-	httpRequest.Header.Add("Accept", "application/ocsp-response")
-	httpRequest.Header.Add("host", ocspURL.Host)
-
-	httpClient := &http.Client{
-		Timeout: time.Duration(*timeout) * time.Second,
-	}
-
-	httpResponse, err := httpClient.Do(httpRequest)
-	if err != nil {
-		message := fmt.Sprintf("error: error <%v> at httpClient.Do()", err)
-		return nil, errors.New(message)
-	}
-	defer httpResponse.Body.Close()
-
-	output, err := ioutil.ReadAll(httpResponse.Body)
-	if err != nil {
-		message := fmt.Sprintf("error: error <%v> at ioutil.ReadAll()", err)
-		return nil, errors.New(message)
-	}
-
-	return output, nil
-}
-
-/*
-buildKeyUsages builds an ordered slice with all key usages
-*/
-func buildKeyUsages(keyUsage x509.KeyUsage) []string {
-
-	var keyUsageList []string
-
-	if keyUsage >= (1 << 9) {
-		keyUsageList = append(keyUsageList, "Unknown")
-	}
-	if Has(keyUsage, x509.KeyUsageDecipherOnly) {
-		keyUsageList = append(keyUsageList, "DecipherOnly")
-	}
-	if Has(keyUsage, x509.KeyUsageEncipherOnly) {
-		keyUsageList = append(keyUsageList, "EncipherOnly")
-	}
-	if Has(keyUsage, x509.KeyUsageCRLSign) {
-		keyUsageList = append(keyUsageList, "CRLSign")
-	}
-	if Has(keyUsage, x509.KeyUsageCertSign) {
-		keyUsageList = append(keyUsageList, "CertSign")
-	}
-	if Has(keyUsage, x509.KeyUsageKeyAgreement) {
-		keyUsageList = append(keyUsageList, "KeyAgreement")
-	}
-	if Has(keyUsage, x509.KeyUsageDataEncipherment) {
-		keyUsageList = append(keyUsageList, "DataEncipherment")
-	}
-	if Has(keyUsage, x509.KeyUsageKeyEncipherment) {
-		keyUsageList = append(keyUsageList, "KeyEncipherment")
-	}
-	if Has(keyUsage, x509.KeyUsageContentCommitment) {
-		keyUsageList = append(keyUsageList, "ContentCommitment")
-	}
-	if Has(keyUsage, x509.KeyUsageDigitalSignature) {
-		keyUsageList = append(keyUsageList, "DigitalSignature")
-	}
-
-	return keyUsageList
-}
-
-// Has tests a bit
-func Has(b, flag x509.KeyUsage) bool {
-
-	return b&flag != 0
-}
-
-/*
-buildExtKeyUsages builds an ordered slice with all extended key usages
-*/
-func buildExtKeyUsages(extKeyUsage []x509.ExtKeyUsage) []string {
-
-	var extKeyUsageList []string
-
-	for _, usage := range extKeyUsage {
-		switch usage {
-		case x509.ExtKeyUsageAny:
-			extKeyUsageList = append(extKeyUsageList, "UsageAny")
-		case x509.ExtKeyUsageServerAuth:
-			extKeyUsageList = append(extKeyUsageList, "ServerAuth")
-		case x509.ExtKeyUsageClientAuth:
-			extKeyUsageList = append(extKeyUsageList, "ClientAuth")
-		case x509.ExtKeyUsageCodeSigning:
-			extKeyUsageList = append(extKeyUsageList, "CodeSigning")
-		case x509.ExtKeyUsageEmailProtection:
-			extKeyUsageList = append(extKeyUsageList, "EmailProtection")
-		case x509.ExtKeyUsageIPSECEndSystem:
-			extKeyUsageList = append(extKeyUsageList, "IPSECEndSystem")
-		case x509.ExtKeyUsageIPSECTunnel:
-			extKeyUsageList = append(extKeyUsageList, "IPSECTunnel")
-		case x509.ExtKeyUsageIPSECUser:
-			extKeyUsageList = append(extKeyUsageList, "IPSECUser")
-		case x509.ExtKeyUsageTimeStamping:
-			extKeyUsageList = append(extKeyUsageList, "TimeStamping")
-		case x509.ExtKeyUsageOCSPSigning:
-			extKeyUsageList = append(extKeyUsageList, "OCSPSigning")
-		case x509.ExtKeyUsageMicrosoftServerGatedCrypto:
-			extKeyUsageList = append(extKeyUsageList, "MicrosoftServerGatedCrypto")
-		case x509.ExtKeyUsageNetscapeServerGatedCrypto:
-			extKeyUsageList = append(extKeyUsageList, "NetscapeServerGatedCrypto")
-		case x509.ExtKeyUsageMicrosoftCommercialCodeSigning:
-			extKeyUsageList = append(extKeyUsageList, "MicrosoftCommercialCodeSigning")
-		case x509.ExtKeyUsageMicrosoftKernelCodeSigning:
-			extKeyUsageList = append(extKeyUsageList, "MicrosoftKernelCodeSigning")
-		default:
-			extKeyUsageList = append(extKeyUsageList, "Unknown")
-		}
-	}
-
-	return extKeyUsageList
-}
-
-/*
-printCertificatePEM prints the certificate in PEM format
-*/
-func printCertificatePEM(rawCertificate []byte) {
-
-	var pemBuffer bytes.Buffer
-	block := &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: rawCertificate,
-	}
-
-	if err := pem.Encode(&pemBuffer, block); err != nil {
-		fmt.Printf("Error: unable to encode raw certificate, error = %v\n", err)
-		return
-	}
-
-	fmt.Printf("\n%s", pemBuffer.String())
-}
-
-/*
-printOCSPResonsePEM prints the OCSP response in PEM format
-*/
-func printOCSPResonsePEM(rawOCSPResponse []byte) {
-
-	var pemBuffer bytes.Buffer
-	block := &pem.Block{
-		Type:  "OCSP RESPONSE",
-		Bytes: rawOCSPResponse,
-	}
-
-	if err := pem.Encode(&pemBuffer, block); err != nil {
-		fmt.Printf("Error: unable to encode raw OCSP response, error = %v\n", err)
-		return
-	}
-
-	fmt.Printf("\n%s", pemBuffer.String())
 }
 
 /*
@@ -648,177 +331,120 @@ func printDump(objectname string, object interface{}) {
 	fmt.Printf("-----END DUMP %s-----\n\n", objectname)
 }
 
-/*
-getTLSVersion gets the TLS version literal
-*/
-func getTLSVersion(version uint16) string {
-
-	switch version {
-	case tls.VersionSSL30:
-		return "VersionSSL30"
-	case tls.VersionTLS10:
-		return "VersionTLS10"
-	case tls.VersionTLS11:
-		return "VersionTLS11"
-	case tls.VersionTLS12:
-		return "VersionTLS12"
-	case tls.VersionTLS13:
-		return "VersionTLS13"
-	default:
-		return "UNKNOWN"
-	}
-}
-
-/*
-getCipherSuite gets the Cipher Suite literal
-*/
-func getCipherSuite(cipherSuite uint16) string {
-
-	switch cipherSuite {
-	// TLS 1.0 - 1.2 cipher suites
-	case tls.TLS_RSA_WITH_RC4_128_SHA:
-		return "TLS_RSA_WITH_RC4_128_SHA"
-	case tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:
-		return "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
-	case tls.TLS_RSA_WITH_AES_128_CBC_SHA:
-		return "TLS_RSA_WITH_AES_128_CBC_SHA"
-	case tls.TLS_RSA_WITH_AES_256_CBC_SHA:
-		return "TLS_RSA_WITH_AES_256_CBC_SHA"
-	case tls.TLS_RSA_WITH_AES_128_CBC_SHA256:
-		return "TLS_RSA_WITH_AES_128_CBC_SHA256"
-	case tls.TLS_RSA_WITH_AES_128_GCM_SHA256:
-		return "TLS_RSA_WITH_AES_128_GCM_SHA256"
-	case tls.TLS_RSA_WITH_AES_256_GCM_SHA384:
-		return "TLS_RSA_WITH_AES_256_GCM_SHA384"
-	case tls.TLS_ECDHE_ECDSA_WITH_RC4_128_SHA:
-		return "TLS_ECDHE_ECDSA_WITH_RC4_128_SHA"
-	case tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:
-		return "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA"
-	case tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA:
-		return "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA"
-	case tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA:
-		return "TLS_ECDHE_RSA_WITH_RC4_128_SHA"
-	case tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA:
-		return "TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA"
-	case tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:
-		return "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA"
-	case tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:
-		return "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA"
-	case tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256:
-		return "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256"
-	case tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256:
-		return "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256"
-	case tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
-		return "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
-	case tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
-		return "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"
-	case tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:
-		return "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
-	case tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
-		return "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384"
-	case tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305:
-		return "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305"
-	case tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305:
-		return "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305"
-	// TLS 1.3 cipher suites
-	case tls.TLS_AES_128_GCM_SHA256:
-		return "TLS_AES_128_GCM_SHA256"
-	case tls.TLS_AES_256_GCM_SHA384:
-		return "TLS_AES_256_GCM_SHA384"
-	case tls.TLS_CHACHA20_POLY1305_SHA256:
-		return "TLS_CHACHA20_POLY1305_SHA256"
-	// TLS_FALLBACK_SCSV isn't a standard cipher suite but an indicator that the client is doing version fallback. See RFC 7507.
-	case tls.TLS_FALLBACK_SCSV:
-		return "TLS_FALLBACK_SCSV"
-	default:
-		return "UNKNOWN"
-	}
-}
-
-// reference output (for 'example.com:443')
+// reference output
 var referenceOutput = `
-  GENERAL INFORMATION ...
-  Service : example.com:443
-  Timeout : 19
-  Verbose : false
-  Debug   : false
-  Time    : 2019-02-26 11:00:45 +0100 CET
+GENERAL INFORMATION ...
+Command                  : ./certstate -ocsp -crl example.com:443
+Service                  : example.com:443
+Timeout                  : 19
+Verbose                  : false
+Debug                    : false
+OCSP                     : true
+CRL                      : true
+Time                     : 2019-11-02 14:35:54 +0100 CET
 
-  TLS CONNECTION DETAILS ...
-  Version           : 772 (0x0304, VersionTLS13)
-  HandshakeComplete : true
-  CipherSuite       : 4866 (0x1302, TLS_AES_256_GCM_SHA384)
+TLS CONNECTION DETAILS ...
+Version                  : 772 (0x0304, VersionTLS13)
+HandshakeComplete        : true
+CipherSuite              : 4866 (0x1302, TLS_AES_256_GCM_SHA384)
 
-  NETWORK ADDRESS DETAILS ...
-  LocalAddr  : 192.168.178.55:54968
-  RemoteAddr : 93.184.216.34:443
+NETWORK ADDRESS DETAILS ...
+LocalAddr                : 192.168.178.55:50398
+LocalHost                : Klauss-MBP.fritz.box
+RemoteAddr               : 93.184.216.34:443
 
-  CERTIFICATE DETAILS ...
-  SignatureAlgorithm    : SHA256-RSA
-  PublicKeyAlgorithm    : RSA
-  Version               : 3
-  SerialNumber          : 21020869104500376438182461249190639870
-  Subject               : CN=www.example.org,OU=Technology,O=Internet Corporation for Assigned Names and Numbers,L=Los Angeles,ST=California,C=US
-  Issuer                : CN=DigiCert SHA2 Secure Server CA,O=DigiCert Inc,C=US
-  NotBefore             : 2018-11-28 00:00:00 +0000 UTC (valid for 735 days)
-  NotAfter              : 2020-12-02 12:00:00 +0000 UTC (expires in 645 days)
-  KeyUsage              : 5 (101, KeyEncipherment, DigitalSignature)
-  ExtKeyUsage           : ServerAuth, ClientAuth
-  IsCA                  : false
-  DNSNames              : www.example.org, example.com, example.edu, example.net, example.org, www.example.com, www.example.edu, www.example.net
-  OCSPServer            : http://ocsp.digicert.com
-  IssuingCertificateURL : http://cacerts.digicert.com/DigiCertSHA2SecureServerCA.crt
-  CRLDistributionPoints : http://crl3.digicert.com/ssca-sha2-g6.crl, http://crl4.digicert.com/ssca-sha2-g6.crl
-  PolicyIdentifiers     : 2.16.840.1.114412.1.1, 2.23.140.1.2.2
-  SubjectKeyId          : 66986202e00991a7d9e336fb76c6b0bfa16da7be
-  AuthorityKeyId        : 0f80611c823161d52f28e78d4638b42ce1c6d9e2
+CERTIFICATE DETAILS ...
+SignatureAlgorithm       : SHA256-RSA
+PublicKeyAlgorithm       : RSA
+Version                  : 3
+SerialNumber             : 21020869104500376438182461249190639870
+Subject                  : CN=www.example.org,OU=Technology,O=Internet Corporation for Assigned Names and Numbers,L=Los Angeles,ST=California,C=US
+Issuer                   : CN=DigiCert SHA2 Secure Server CA,O=DigiCert Inc,C=US
+NotBefore                : 2018-11-28 00:00:00 +0000 UTC (valid for 735 days)
+NotAfter                 : 2020-12-02 12:00:00 +0000 UTC (expires in 395 days)
+KeyUsage                 : 5 (101, KeyEncipherment, DigitalSignature)
+ExtKeyUsage              : ServerAuth, ClientAuth
+IsCA                     : false
+DNSNames                 : www.example.org, example.com, example.edu, example.net, example.org, www.example.com, www.example.edu, www.example.net
+OCSPServer               : http://ocsp.digicert.com
+IssuingCertificateURL    : http://cacerts.digicert.com/DigiCertSHA2SecureServerCA.crt
+CRLDistributionPoints    : http://crl3.digicert.com/ssca-sha2-g6.crl, http://crl4.digicert.com/ssca-sha2-g6.crl
+PolicyIdentifiers        : 2.16.840.1.114412.1.1, 2.23.140.1.2.2 (organization validation)
+SubjectKeyId             : 66986202e00991a7d9e336fb76c6b0bfa16da7be
+AuthorityKeyId           : 0f80611c823161d52f28e78d4638b42ce1c6d9e2
 
-  CERTIFICATE DETAILS ...
-  SignatureAlgorithm    : SHA256-RSA
-  PublicKeyAlgorithm    : RSA
-  Version               : 3
-  SerialNumber          : 2646203786665923649276728595390119057
-  Subject               : CN=DigiCert SHA2 Secure Server CA,O=DigiCert Inc,C=US
-  Issuer                : CN=DigiCert Global Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US
-  NotBefore             : 2013-03-08 12:00:00 +0000 UTC (valid for 3652 days)
-  NotAfter              : 2023-03-08 12:00:00 +0000 UTC (expires in 1471 days)
-  KeyUsage              : 97 (1100001, CRLSign, CertSign, DigitalSignature)
-  IsCA                  : true
-  OCSPServer            : http://ocsp.digicert.com
-  CRLDistributionPoints : http://crl3.digicert.com/DigiCertGlobalRootCA.crl, http://crl4.digicert.com/DigiCertGlobalRootCA.crl
-  PolicyIdentifiers     : 2.5.29.32.0
-  SubjectKeyId          : 0f80611c823161d52f28e78d4638b42ce1c6d9e2
-  AuthorityKeyId        : 03de503556d14cbb66f0a3e21b1bc397b23dd155
+CERTIFICATE DETAILS ...
+SignatureAlgorithm       : SHA256-RSA
+PublicKeyAlgorithm       : RSA
+Version                  : 3
+SerialNumber             : 2646203786665923649276728595390119057
+Subject                  : CN=DigiCert SHA2 Secure Server CA,O=DigiCert Inc,C=US
+Issuer                   : CN=DigiCert Global Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US
+NotBefore                : 2013-03-08 12:00:00 +0000 UTC (valid for 3652 days)
+NotAfter                 : 2023-03-08 12:00:00 +0000 UTC (expires in 1221 days)
+KeyUsage                 : 97 (1100001, CRLSign, CertSign, DigitalSignature)
+IsCA                     : true
+OCSPServer               : http://ocsp.digicert.com
+CRLDistributionPoints    : http://crl3.digicert.com/DigiCertGlobalRootCA.crl, http://crl4.digicert.com/DigiCertGlobalRootCA.crl
+PolicyIdentifiers        : 2.5.29.32.0
+SubjectKeyId             : 0f80611c823161d52f28e78d4638b42ce1c6d9e2
+AuthorityKeyId           : 03de503556d14cbb66f0a3e21b1bc397b23dd155
 
-  CERTIFICATE DETAILS ...
-  SignatureAlgorithm    : SHA1-RSA
-  PublicKeyAlgorithm    : RSA
-  Version               : 3
-  SerialNumber          : 10944719598952040374951832963794454346
-  Subject               : CN=DigiCert Global Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US
-  Issuer                : CN=DigiCert Global Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US
-  NotBefore             : 2006-11-10 00:00:00 +0000 UTC (valid for 9131 days)
-  NotAfter              : 2031-11-10 00:00:00 +0000 UTC (expires in 4639 days)
-  KeyUsage              : 97 (1100001, CRLSign, CertSign, DigitalSignature)
-  IsCA                  : true
-  SubjectKeyId          : 03de503556d14cbb66f0a3e21b1bc397b23dd155
-  AuthorityKeyId        : 03de503556d14cbb66f0a3e21b1bc397b23dd155
+CERTIFICATE DETAILS ...
+SignatureAlgorithm       : SHA1-RSA
+PublicKeyAlgorithm       : RSA
+Version                  : 3
+SerialNumber             : 10944719598952040374951832963794454346
+Subject                  : CN=DigiCert Global Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US
+Issuer                   : CN=DigiCert Global Root CA,OU=www.digicert.com,O=DigiCert Inc,C=US
+NotBefore                : 2006-11-10 00:00:00 +0000 UTC (valid for 9131 days)
+NotAfter                 : 2031-11-10 00:00:00 +0000 UTC (expires in 4390 days)
+KeyUsage                 : 97 (1100001, CRLSign, CertSign, DigitalSignature)
+IsCA                     : true
+SubjectKeyId             : 03de503556d14cbb66f0a3e21b1bc397b23dd155
+AuthorityKeyId           : 03de503556d14cbb66f0a3e21b1bc397b23dd155
 
-  OCSP DETAILS - STAPLED INFORMATION ...
-  Status           : 0 (Good)
-  SerialNumber     : 21020869104500376438182461249190639870
-  ProducedAt       : 2019-02-25 06:26:59 +0000 UTC
-  ThisUpdate       : 2019-02-25 06:26:59 +0000 UTC (was provided 27 hours ago)
-  NextUpdate       : 2019-03-04 05:41:59 +0000 UTC (will be provided in 139 hours)
-  RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
-  RevocationReason : 0 (Unspecified)
+OCSP DETAILS - STAPLED INFORMATION ...
+CertificateStatus        : Good
+SerialNumber             : 21020869104500376438182461249190639870
+ProducedAt               : 2019-11-01 05:27:38 +0000 UTC
+ThisUpdate               : 2019-11-01 05:27:38 +0000 UTC (was provided 32 hours ago)
+NextUpdate               : 2019-11-08 04:42:38 +0000 UTC (will be provided in 135 hours)
 
-  OCSP DETAILS - SERVICE RESPONSE ...
-  Status           : 0 (Good)
-  SerialNumber     : 21020869104500376438182461249190639870
-  ProducedAt       : 2019-02-26 06:26:58 +0000 UTC
-  ThisUpdate       : 2019-02-26 06:26:58 +0000 UTC (was provided 3 hours ago)
-  NextUpdate       : 2019-03-05 05:41:58 +0000 UTC (will be provided in 163 hours)
-  RevokedAt        : 0001-01-01 00:00:00 +0000 UTC
-  RevocationReason : 0 (Unspecified)
+OCSP DETAILS - SERVICE RESPONSE ...
+CertificateStatus        : Good
+SerialNumber             : 21020869104500376438182461249190639870
+ProducedAt               : 2019-11-02 05:27:43 +0000 UTC
+ThisUpdate               : 2019-11-02 05:27:43 +0000 UTC (was provided 8 hours ago)
+NextUpdate               : 2019-11-09 04:42:43 +0000 UTC (will be provided in 159 hours)
+
+CRL DETAILS ...
+DistributionPoint        : http://crl3.digicert.com/ssca-sha2-g6.crl
+DownloadSupport          : Yes
+ReadingStatus            : Ok
+Signature                : Valid
+Version                  : 1
+Issuer                   : CN=DigiCert SHA2 Secure Server CA,O=DigiCert Inc,C=US
+ThisUpdate               : 2019-11-01 22:48:32 +0000 UTC (was provided 14 hours ago)
+NextUpdate               : 2019-11-11 22:48:32 +0000 UTC (will be provided in 225 hours)
+Extension                : Id=2.5.29.35, Value=[48 22 128 20 15 128 97 28 130 49 97 213 47 40 231 141 70 56 180 44 225 198 217 226]
+Extension                : Id=2.5.29.20, Value=[2 2 2 208]
+Extension                : Id=2.5.29.28, Value=[48 47 160 45 160 43 134 41 104 116 116 112 58 47 47 99 114 108 51 46 100 105 103 105 99 101 114 116 46 99 111 109 47 115 115 99 97 45 115 104 97 50 45 103 54 46 99 114 108]
+CertificateStatus        : Good
+SerialNumber             : 21020869104500376438182461249190639870
+
+CRL DETAILS ...
+DistributionPoint        : http://crl4.digicert.com/ssca-sha2-g6.crl
+DownloadSupport          : Yes
+ReadingStatus            : Ok
+Signature                : Valid
+Version                  : 1
+Issuer                   : CN=DigiCert SHA2 Secure Server CA,O=DigiCert Inc,C=US
+ThisUpdate               : 2019-11-01 22:48:32 +0000 UTC (was provided 14 hours ago)
+NextUpdate               : 2019-11-11 22:48:32 +0000 UTC (will be provided in 225 hours)
+Extension                : Id=2.5.29.35, Value=[48 22 128 20 15 128 97 28 130 49 97 213 47 40 231 141 70 56 180 44 225 198 217 226]
+Extension                : Id=2.5.29.20, Value=[2 2 2 208]
+Extension                : Id=2.5.29.28, Value=[48 47 160 45 160 43 134 41 104 116 116 112 58 47 47 99 114 108 51 46 100 105 103 105 99 101 114 116 46 99 111 109 47 115 115 99 97 45 115 104 97 50 45 103 54 46 99 114 108]
+CertificateStatus        : Good
+SerialNumber             : 21020869104500376438182461249190639870
 `
