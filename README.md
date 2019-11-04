@@ -240,6 +240,7 @@ The master branch is used for program development and may be unstable. See 'Rele
 ## Build (master, requires go 1.13)
 
 go get github.com/Klaus-Tockloth/certstate
+
 make
 
 ## Links
